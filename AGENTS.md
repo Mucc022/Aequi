@@ -2,6 +2,8 @@
 
 This file is for future Codex sessions working in this repository. Read it before making changes.
 
+Also read `PROJECT_BLUEPRINT.md` before starting any Aequora task. At the end of a task, update `PROJECT_BLUEPRINT.md` if task status, project direction, or user decisions changed.
+
 ## Project Snapshot
 
 Aequora is a Windows-first local desktop tool for organizing study media. It processes local audio/video files, folders, or webpage links and can produce audio exports, subtitles, text transcripts, manifests, failed-task logs, and run ledgers.
@@ -27,6 +29,8 @@ The user primarily works through vibe coding and expects the agent to inspect th
 - `media2text/orchestrator.py`: core task execution.
 - `config.json`: default runtime configuration.
 - `README.md`: user-facing setup, launch, CLI, output, and maintenance notes.
+- `PROJECT_BLUEPRINT.md`: live project map, task board, and work log.
+- `CODEX_MEMORY.md`: reusable project memory draft for future Codex sessions or memory upload.
 
 ## User Preferences For This Project
 
@@ -36,6 +40,7 @@ The user primarily works through vibe coding and expects the agent to inspect th
 - When adding launch or packaging behavior, include diagnostics and recovery paths.
 - Be careful with Chinese text and UTF-8. Use `Get-Content -Encoding UTF8` when reading Markdown or source containing Chinese.
 - Do not revert unrelated local changes. Inspect first, then work with the current tree.
+- Treat natural-language vibe-coding notes in `PROJECT_BLUEPRINT.md` as the routing layer for future work.
 
 ## Validation Commands
 
@@ -87,3 +92,14 @@ The current README suggests:
 ```
 
 If packaging becomes active work, verify whether `run_gui.pyw` or a dedicated spec file is the better target before finalizing.
+
+## Required Task Loop
+
+For every non-trivial Aequora task:
+
+1. Read `AGENTS.md` and `PROJECT_BLUEPRINT.md`.
+2. Inspect relevant code before editing.
+3. Implement the smallest practical change that solves the user problem.
+4. Run focused validation.
+5. Update `PROJECT_BLUEPRINT.md` with task status and a short log entry.
+6. Commit only intentional project files when the user asks for git work or the change is a durable project-management/documentation update.
