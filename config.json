@@ -1,0 +1,31 @@
+﻿{
+  "output_root": "outputs",
+  "naming_template": "{platform}_{date}_{title}",
+  "subtitle_priority": "subtitle_first_then_whisper",
+  "subtitle_langs": ["zh-Hans", "zh-CN", "zh", "en", "en.*"],
+  "whisper": {
+    "model": "medium",
+    "language": "zh",
+    "device": "auto",
+    "compute_type": null
+  },
+  "download": {
+    "keep_original": true,
+    "cookies_file": "",
+    "quality": "best",
+    "prefer_compatible_codecs": true,
+    "allow_separate_streams": false,
+    "js_runtimes": ["deno", "node"],
+    "remote_components": ["ejs:github"],
+    "download_subtitles": false,
+    "write_auto_subtitles": true,
+    "embed_subtitles": false
+  },
+  "scraping": {
+    "request_timeout_seconds": 20,
+    "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "always_try_page_url": false,
+    "candidate_mode": "select",
+    "download_archive": "downloaded.txt"
+  }
+}

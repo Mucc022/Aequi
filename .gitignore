@@ -1,0 +1,37 @@
+﻿# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual env
+.venv/
+venv/
+
+# Build / package
+build/
+dist/
+*.spec
+
+# Runtime outputs
+outputs/
+outputs-*/
+logs/
+*.log
+.media2text_gui_prefs.json
+
+# Local shortcuts / generated launch artifacts
+*.lnk
+
+# Validation fixtures may be committed, generated validation outputs should not
+_validation_work/out/
+_validation_work/smoke/
+
+# Legacy scripts kept locally while the project is being consolidated
+_cleanup_backup/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
