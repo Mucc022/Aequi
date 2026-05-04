@@ -82,3 +82,10 @@ The next likely work is product optimization. Good starting areas:
 - Make results easier to open and understand.
 - Improve failure explanations and retry guidance.
 - Improve packaging/distribution when the app behavior is stable.
+
+## Recent Fix Notes
+
+- 2026-05-04: Fixed a serious Fluent GUI candidate-cache bug. New parsing now clears candidate items/order/rows, the table model, preview, and pending run context before rebuilding candidates.
+- Candidate scanning now uses `_candidate_scan_token`; stale async scan results from an older webpage task are ignored.
+- Local files now create local `CandidateItem` rows with `source_kind="local"`, an empty `source_url`, title from the file stem, source text `本地文件`, and status `未处理`.
+- CLI help description was renamed from `Unified Media2Text tool` to `Aequora media organizer`.

@@ -17,6 +17,7 @@ from .config import AppConfig
 from .ffmpeg_utils import discover_local_media, extract_audio_to_file, extract_audio_to_wav
 from .io_utils import (
     append_jsonl,
+    is_direct_media_url,
     is_url,
     normalize_platform,
     pick_date_yy_mm_dd,
@@ -50,6 +51,7 @@ class SourceTask:
     source: str
     resolved_input: str
     source_type: str  # local_file/url
+    source_page: str = ""
 
 
 @dataclass
@@ -71,6 +73,7 @@ class MediaOrchestrator:
         ffmpeg_bin: str = "ffmpeg",
         run_id: str | None = None,
         force_keys: set[str] | None = None,
+        source_pages: dict[str, str] | None = None,
         log_fn: LogFn = None,
     ) -> None:
         self.config = config
@@ -78,6 +81,7 @@ class MediaOrchestrator:
         self.ffmpeg_bin = ffmpeg_bin
         self.run_id = run_id or uuid.uuid4().hex[:12]
         self.force_keys = force_keys or set()
+        self.source_pages = source_pages or {}
         self.log_fn = log_fn
 
         self.system_dir = output_root / "后台数据"
@@ -95,6 +99,28 @@ class MediaOrchestrator:
 
         self._transcriber: WhisperTranscriber | None = None
         self._next_result_index = self._scan_next_result_index()
+
+    @staticmethod
+    def _is_access_denied_error(exc: BaseException | str) -> bool:
+        text = str(exc).lower()
+        return any(token in text for token in ("403", "401", "forbidden", "access denied", "url expired", "expired url"))
+
+    def _cookie_status_text(self) -> str:
+        mode = (getattr(self.config.download, "cookie_mode", "none") or "none").strip().lower()
+        if mode == "cookies_file":
+            return "已启用 Cookie 文件，但服务器仍拒绝访问，可能是链接过期或需要重新登录。"
+        if mode == "browser":
+            return "已启用浏览器 Cookie，但服务器仍拒绝访问，可能是链接过期或需要重新登录。"
+        return "服务器拒绝访问。可尝试在设置中启用 Cookie，或从来源网页重新解析以使用 Referer。"
+
+    def _access_denied_message(self, exc: BaseException | str, source_page: str = "", attempted_referer: bool = False) -> str:
+        detail = str(exc)
+        hints = [self._cookie_status_text()]
+        if source_page and attempted_referer:
+            hints.append("已尝试来源页 Referer 回退但仍失败。")
+        elif not source_page:
+            hints.append("缺少来源页，无法自动补救。")
+        return f"{detail} | " + " ".join(hints)
 
     def _log(self, message: str) -> None:
         logger.info(message)
@@ -133,7 +159,14 @@ class MediaOrchestrator:
                 continue
 
             if is_url(item):
-                expanded.append(SourceTask(source=item, resolved_input=item, source_type="url"))
+                expanded.append(
+                    SourceTask(
+                        source=item,
+                        resolved_input=item,
+                        source_type="url",
+                        source_page=self.source_pages.get(item, ""),
+                    )
+                )
                 continue
 
             path = Path(item).expanduser()
@@ -237,6 +270,11 @@ class MediaOrchestrator:
         tasks = self.expand_inputs(input_items)
         self._log(f"[INFO] Expanded to {len(tasks)} task(s).")
         self._ledger("run_start", total=len(tasks))
+        cookie_mode = (getattr(self.config.download, "cookie_mode", "none") or "none").strip().lower()
+        if cookie_mode == "cookies_file":
+            self._log("[INFO] 已启用 Cookie 文件")
+        elif cookie_mode == "browser":
+            self._log("[INFO] 已启用浏览器 Cookie")
 
         success = 0
         failed = 0
@@ -270,6 +308,7 @@ class MediaOrchestrator:
                         "candidate_index": index,
                         "candidate_title": "",
                         "source": task.source,
+                        "source_page": task.source_page,
                         "original_url": task.resolved_input if task.source_type == "url" else "",
                         "retry_input": task.resolved_input,
                         "status": "failed",
@@ -292,6 +331,7 @@ class MediaOrchestrator:
                         "candidate_index": index,
                         "candidate_title": "",
                         "source": task.source,
+                        "source_page": task.source_page,
                         "original_url": task.resolved_input if task.source_type == "url" else "",
                         "retry_input": task.resolved_input,
                         "status": "failed",
@@ -314,6 +354,7 @@ class MediaOrchestrator:
                         "candidate_index": index,
                         "candidate_title": "",
                         "source": task.source,
+                        "source_page": task.source_page,
                         "original_url": task.resolved_input if task.source_type == "url" else "",
                         "retry_input": task.resolved_input,
                         "status": "failed",
@@ -396,6 +437,7 @@ class MediaOrchestrator:
             "candidate_title": str(paths["candidate_title"]),
             "result_index": int(paths["result_index"]),
             "source": task.source,
+            "source_page": task.source_page,
             "original_url": "",
             "resolved_input": task.resolved_input,
             "platform": platform,
@@ -428,6 +470,7 @@ class MediaOrchestrator:
                 "candidate_index": task_index,
                 "candidate_title": "",
                 "source": task.source,
+                "source_page": task.source_page,
                 "original_url": task.resolved_input,
                 "resolved_input": task.resolved_input,
                 "status": "skipped",
@@ -437,9 +480,19 @@ class MediaOrchestrator:
             }
 
         try:
+            referer = task.source_page if task.source_page and task.source_page != task.resolved_input else None
+            if referer:
+                self._log("  using source page as Referer")
             self._log("  extracting metadata...")
-            info = extract_info(task.resolved_input, download_cfg=self.config.download)
+            info = extract_info(task.resolved_input, download_cfg=self.config.download, referer=referer)
         except Exception as exc:  # noqa: BLE001
+            if self._is_access_denied_error(exc):
+                attempted_referer = bool(task.source_page and task.source_page != task.resolved_input)
+                raise TaskFailure(
+                    f"Failed to extract URL info: {self._access_denied_message(exc, task.source_page, attempted_referer)}",
+                    stage="metadata",
+                    retry_suggestion=self._cookie_status_text(),
+                ) from exc
             raise TaskFailure(
                 f"Failed to extract URL info: {exc}",
                 stage="metadata",
@@ -479,6 +532,7 @@ class MediaOrchestrator:
                 subtitle_stem=Path(paths["temp_dir"]) / f"{base_name}__subtitle",
                 subtitle_langs=self.config.subtitle_langs,
                 download_cfg=self.config.download,
+                referer=referer,
             )
 
         if subtitle_path:
@@ -512,6 +566,7 @@ class MediaOrchestrator:
                     url=task.resolved_input,
                     media_stem=media_dir / f"{base_name}__media",
                     download_cfg=self.config.download,
+                    referer=referer,
                 )
                 self._record_artifact(task_id, media_path, "media")
                 self._log(f"  media downloaded: {media_path.name}")
@@ -519,6 +574,15 @@ class MediaOrchestrator:
                 if transcript_source == "platform_subtitle":
                     self._log(f"  [WARN] media download failed but subtitle output already exists: {exc}")
                 else:
+                    if self._is_access_denied_error(exc):
+                        attempted_referer = bool(referer)
+                        if is_direct_media_url(task.resolved_input) and task.source_page:
+                            self._log("  [WARN] direct media access denied; source-page Referer was used.")
+                        raise TaskFailure(
+                            f"Failed downloading media: {self._access_denied_message(exc, task.source_page, attempted_referer)}",
+                            stage="download",
+                            retry_suggestion=self._cookie_status_text(),
+                        ) from exc
                     raise TaskFailure(
                         f"Failed downloading media: {exc}",
                         stage="download",
@@ -528,6 +592,15 @@ class MediaOrchestrator:
                 if transcript_source == "platform_subtitle":
                     self._log(f"  [WARN] media download failed but subtitle output already exists: {exc}")
                 else:
+                    if self._is_access_denied_error(exc):
+                        attempted_referer = bool(referer)
+                        if is_direct_media_url(task.resolved_input) and task.source_page:
+                            self._log("  [WARN] direct media access denied; source-page Referer was used.")
+                        raise TaskFailure(
+                            f"Failed downloading media: {self._access_denied_message(exc, task.source_page, attempted_referer)}",
+                            stage="download",
+                            retry_suggestion=self._cookie_status_text(),
+                        ) from exc
                     raise TaskFailure(
                         f"Failed downloading media: {exc}",
                         stage="download",
@@ -575,6 +648,7 @@ class MediaOrchestrator:
             "candidate_title": str(paths["candidate_title"]),
             "result_index": int(paths["result_index"]),
             "source": task.source,
+            "source_page": task.source_page,
             "original_url": task.resolved_input,
             "resolved_input": task.resolved_input,
             "platform": platform,

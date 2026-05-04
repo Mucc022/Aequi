@@ -11,7 +11,9 @@
   },
   "download": {
     "keep_original": true,
+    "cookie_mode": "none",
     "cookies_file": "",
+    "cookies_browser": "chrome",
     "quality": "best",
     "prefer_compatible_codecs": true,
     "allow_separate_streams": false,

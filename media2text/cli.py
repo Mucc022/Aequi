@@ -2,6 +2,7 @@
 
 import argparse
 import logging
+import os
 import sys
 import uuid
 from pathlib import Path
@@ -22,6 +23,13 @@ from .snapshot_utils import (
 
 
 def setup_logging() -> None:
+    os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+    os.environ.setdefault("PYTHONUTF8", "1")
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s | %(levelname)s | %(message)s",
@@ -30,7 +38,7 @@ def setup_logging() -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Unified Media2Text tool")
+    parser = argparse.ArgumentParser(description="Aequora media organizer")
     sub = parser.add_subparsers(dest="command", required=True)
 
     run_parser = sub.add_parser("run", help="Process input paths or URLs")
@@ -61,6 +69,9 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--request-timeout", type=int, default=None)
     run_parser.add_argument("--user-agent", default=None)
     run_parser.add_argument("--force-key", action="append", default=None)
+    run_parser.add_argument("--source-page", action="append", default=None, help="Media/source mapping as MEDIA_URL||PAGE_URL")
+    run_parser.add_argument("--cookies-file", default=None)
+    run_parser.add_argument("--cookies-from-browser", choices=["chrome", "edge", "firefox"], default=None)
     run_parser.add_argument("--run-id", default=None)
 
     retry_parser = sub.add_parser("retry-failed", help="Retry failed tasks from failed_tasks.jsonl")
@@ -112,6 +123,12 @@ def apply_run_overrides(cfg: AppConfig, args: argparse.Namespace) -> None:
         cfg.scraping.request_timeout_seconds = int(args.request_timeout)
     if args.user_agent:
         cfg.scraping.user_agent = str(args.user_agent)
+    if args.cookies_file:
+        cfg.download.cookie_mode = "cookies_file"
+        cfg.download.cookies_file = str(args.cookies_file)
+    if args.cookies_from_browser:
+        cfg.download.cookie_mode = "browser"
+        cfg.download.cookies_browser = str(args.cookies_from_browser)
 
     if args.quality:
         cfg.download.quality = str(args.quality)
@@ -148,6 +165,20 @@ def apply_run_overrides(cfg: AppConfig, args: argparse.Namespace) -> None:
         cfg.download.js_runtimes = [x.strip() for x in args.js_runtime if x.strip()]
     if args.remote_component:
         cfg.download.remote_components = [x.strip() for x in args.remote_component if x.strip()]
+
+
+def parse_source_page_pairs(values: list[str] | None) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for raw in values or []:
+        text = str(raw).strip()
+        if "||" not in text:
+            continue
+        media_url, page_url = text.split("||", 1)
+        media_url = media_url.strip()
+        page_url = page_url.strip()
+        if media_url and page_url:
+            out[media_url] = page_url
+    return out
 
 
 def run_snapshot_make_prompt(args: argparse.Namespace) -> int:
@@ -252,7 +283,7 @@ def resolve_inputs_for_run(
     raw_inputs: list[str],
     cfg: AppConfig,
     output_root: Path,
-) -> tuple[list[str], set[str], bool]:
+) -> tuple[list[str], set[str], bool, dict[str, str]]:
     mode = cfg.scraping.candidate_mode
 
     archive_path = Path(cfg.scraping.download_archive).expanduser()
@@ -262,6 +293,7 @@ def resolve_inputs_for_run(
 
     final_inputs: list[str] = []
     force_keys: set[str] = set()
+    source_pages: dict[str, str] = {}
 
     for item in raw_inputs:
         raw = item.strip()
@@ -288,13 +320,17 @@ def resolve_inputs_for_run(
             logging.warning("URL discover failed, fallback to direct URL: %s (%s)", raw, exc)
             targets = [raw]
 
+        for target in targets:
+            if target != raw:
+                source_pages[target] = raw
+
         if mode == "auto":
             final_inputs.extend(targets)
             continue
 
         selected, local_force, requested_quit = _prompt_select_targets_for_url(raw, targets, seen_keys)
         if requested_quit:
-            return final_inputs, force_keys, True
+            return final_inputs, force_keys, True, source_pages
 
         final_inputs.extend(selected)
         force_keys.update(local_force)
@@ -308,7 +344,7 @@ def resolve_inputs_for_run(
         seen_input.add(item)
         deduped_inputs.append(item)
 
-    return deduped_inputs, force_keys, False
+    return deduped_inputs, force_keys, False, source_pages
 
 
 def _ensure_ffmpeg() -> tuple[bool, str]:
@@ -350,13 +386,15 @@ def main(argv: list[str] | None = None) -> int:
     output_root = ensure_output_root(base_dir=base_dir, output_root=args.out or cfg.output_root)
 
     if args.command == "run":
-        resolved_inputs, discovered_force_keys, requested_quit = resolve_inputs_for_run(args.input, cfg, output_root)
+        resolved_inputs, discovered_force_keys, requested_quit, discovered_source_pages = resolve_inputs_for_run(args.input, cfg, output_root)
         if requested_quit:
             logging.info("Cancelled by user during candidate selection")
             return 0
 
         force_keys = set(args.force_key or [])
         force_keys.update(discovered_force_keys)
+        source_pages = discovered_source_pages
+        source_pages.update(parse_source_page_pairs(args.source_page))
 
         if not resolved_inputs:
             logging.info("No inputs selected after candidate filtering")
@@ -369,6 +407,7 @@ def main(argv: list[str] | None = None) -> int:
             ffmpeg_bin=ffmpeg_message,
             run_id=run_id,
             force_keys=force_keys,
+            source_pages=source_pages,
         )
         summary = orchestrator.run(resolved_inputs)
     else:

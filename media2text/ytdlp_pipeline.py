@@ -50,7 +50,7 @@ def build_format_selector(
     return f"bv*[height<={h}]+ba/b[height<={h}]/best[height<={h}]/b"
 
 
-def _base_opts(download_cfg: DownloadConfig) -> dict[str, Any]:
+def _base_opts(download_cfg: DownloadConfig, referer: str | None = None) -> dict[str, Any]:
     opts: dict[str, Any] = {
         "quiet": False,
         "no_warnings": False,
@@ -62,11 +62,22 @@ def _base_opts(download_cfg: DownloadConfig) -> dict[str, Any]:
         "overwrites": False,
     }
 
+    cookie_mode = (getattr(download_cfg, "cookie_mode", "none") or "none").strip().lower()
     cookies_file = (download_cfg.cookies_file or "").strip()
-    if cookies_file:
+    if cookie_mode == "cookies_file" and cookies_file:
         cookie_path = Path(cookies_file).expanduser()
         if cookie_path.exists():
             opts["cookiefile"] = str(cookie_path)
+    elif cookie_mode == "browser":
+        browser = (getattr(download_cfg, "cookies_browser", "chrome") or "chrome").strip().lower()
+        if browser in {"chrome", "edge", "firefox"}:
+            opts["cookiesfrombrowser"] = (browser,)
+
+    if referer:
+        opts["referer"] = referer
+        headers = dict(opts.get("http_headers") or {})
+        headers["Referer"] = referer
+        opts["http_headers"] = headers
 
     runtimes = [x.strip().lower() for x in download_cfg.js_runtimes if str(x).strip()]
     if runtimes:
@@ -87,8 +98,8 @@ def _normalize_info(info: dict[str, Any]) -> dict[str, Any]:
     return info
 
 
-def extract_info(url: str, download_cfg: DownloadConfig) -> dict[str, Any]:
-    opts = _base_opts(download_cfg)
+def extract_info(url: str, download_cfg: DownloadConfig, referer: str | None = None) -> dict[str, Any]:
+    opts = _base_opts(download_cfg, referer=referer)
     opts.update({"skip_download": True})
 
     with YoutubeDL(opts) as ydl:
@@ -104,10 +115,11 @@ def download_best_subtitle(
     subtitle_stem: Path,
     subtitle_langs: list[str],
     download_cfg: DownloadConfig,
+    referer: str | None = None,
 ) -> Path | None:
     subtitle_stem.parent.mkdir(parents=True, exist_ok=True)
 
-    opts = _base_opts(download_cfg)
+    opts = _base_opts(download_cfg, referer=referer)
     subtitle_format = (download_cfg.subtitle_output_format or "srt").strip().lower()
     if subtitle_format not in {"srt", "vtt", "ass"}:
         subtitle_format = "srt"
@@ -142,10 +154,11 @@ def download_media_file(
     url: str,
     media_stem: Path,
     download_cfg: DownloadConfig,
+    referer: str | None = None,
 ) -> Path:
     media_stem.parent.mkdir(parents=True, exist_ok=True)
 
-    opts = _base_opts(download_cfg)
+    opts = _base_opts(download_cfg, referer=referer)
     opts.update(
         {
             "format": build_format_selector(

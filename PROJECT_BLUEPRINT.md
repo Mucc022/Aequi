@@ -69,6 +69,7 @@ Aequora 是一个 Windows-first 的本地学习资料整理工具：用户丢进
 | AQR-002 | Done | 新 Codex 窗口要能快速读懂项目 | 仓库里有 Codex 交接文件 | 已完成，新增 `AGENTS.md` |
 | AQR-003 | Done | 需要项目总地图和规则，每次任务前后都检查更新 | 有一个活文档记录蓝图、任务和日志 | 本次新增 `PROJECT_BLUEPRINT.md` |
 | AQR-004 | Ready | 需要继续优化产品体验 | 先从启动、界面可懂性、结果可找到、失败可恢复这些方向挑下一个具体任务 | 等用户指定下一步或 Codex 根据现状建议 |
+| AQR-005 | Done | 新任务选择本地视频后，候选页显示上一次网页任务里的旧候选 | 每次解析前清空旧候选；本地文件生成本地候选；迟到的旧网页扫描结果不能污染当前任务 | 已修复 `gui_fluent.py` 候选状态清理、扫描 token、本地候选创建，并验证通过 |
 
 ## 体验优化候选
 
@@ -93,6 +94,14 @@ Aequora 是一个 Windows-first 的本地学习资料整理工具：用户丢进
 - 新增 `AGENTS.md`，作为未来 Codex 会话的项目交接文件。
 - 新增 `PROJECT_BLUEPRINT.md`，作为项目总地图、任务池和日志。
 - 新增 `CODEX_MEMORY.md`，作为可上传/复用的 Codex 项目记忆草稿。
+
+### 2026-05-04
+
+- 修复 Fluent GUI 候选缓存残留 BUG：开始新解析和进入候选准备时统一清空 `_candidate_items`、`_candidate_order`、`_candidate_rows`、模型、预览和运行上下文。
+- 为候选扫描增加 `_candidate_scan_token`，忽略上一次网页扫描线程迟到返回的旧 `video.wixstatic.com` / `youtube.com` 候选。
+- 本地文件现在在候选页生成 `source_kind="local"` 的本地候选，标题使用文件 stem，来源显示“本地文件”，状态显示“未处理”，`source_url` 为空。
+- 顺手把 CLI help 描述从 `Unified Media2Text tool` 改为 `Aequora media organizer`。
+- 验证：`compileall`、`media_tool.py --help`、offscreen GUI 状态测试均通过；临时验证目录已清理。
 
 ## 每次任务结束检查表
 

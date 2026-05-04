@@ -24,7 +24,9 @@ class WhisperConfig:
 class DownloadConfig:
     keep_original: bool = True
     save_metadata: bool = False
+    cookie_mode: str = "none"  # none/cookies_file/browser
     cookies_file: str = ""
+    cookies_browser: str = "chrome"  # chrome/edge/firefox
     quality: str = "best"
     prefer_compatible_codecs: bool = True
     allow_separate_streams: bool = False
@@ -85,6 +87,7 @@ def _apply_legacy_keys(cfg: AppConfig, raw: dict[str, Any]) -> None:
 
     if "cookie_file" in raw and not cfg.download.cookies_file:
         cfg.download.cookies_file = str(raw["cookie_file"])
+        cfg.download.cookie_mode = "cookies_file"
 
     if "quality" in raw:
         cfg.download.quality = str(raw["quality"])
@@ -126,6 +129,7 @@ def _apply_legacy_keys(cfg: AppConfig, raw: dict[str, Any]) -> None:
         cookies = platform.get("cookies_file")
         if cookies and not cfg.download.cookies_file:
             cfg.download.cookies_file = str(cookies)
+            cfg.download.cookie_mode = "cookies_file"
 
 
 
@@ -143,6 +147,11 @@ def load_config(config_path: Path | None) -> AppConfig:
 
     if cfg.scraping.candidate_mode not in {"select", "auto"}:
         cfg.scraping.candidate_mode = "select"
+
+    if cfg.download.cookie_mode not in {"none", "cookies_file", "browser"}:
+        cfg.download.cookie_mode = "none"
+    if cfg.download.cookies_browser not in {"chrome", "edge", "firefox"}:
+        cfg.download.cookies_browser = "chrome"
 
     if not cfg.download.js_runtimes:
         cfg.download.js_runtimes = ["deno", "node"]

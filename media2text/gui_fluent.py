@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import sys
@@ -26,7 +26,7 @@ from .io_utils import append_jsonl, is_direct_media_url, is_url, read_jsonl
 from .run_ledger import rollback_from_ledger
 from .scraper_engine import dedup_key, discover_targets, extract_youtube_video_id, load_seen_archive
 
-from PySide6.QtCore import QAbstractTableModel, QModelIndex, QProcess, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import QAbstractTableModel, QModelIndex, QProcess, QProcessEnvironment, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QAction, QDesktopServices, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
@@ -276,6 +276,7 @@ class FluentMedia2TextWindow(QMainWindow):
         self._candidate_rows: list[str] = []
         self._pending_run_context: tuple[AppConfig, Path, Path, list[str], Path] | None = None
         self._parsed_input_items: list[str] = []
+        self._candidate_scan_token = 0
         self._input_mode: str = "auto"
         self._progress_total = 0
         self._progress_completed = 0
@@ -336,6 +337,10 @@ class FluentMedia2TextWindow(QMainWindow):
         self.task_quality_combo: QComboBox | None = None
         self.task_prefer_compatible_chk: QCheckBox | None = None
         self.task_allow_separate_chk: QCheckBox | None = None
+        self.cookie_mode_combo: QComboBox | None = None
+        self.cookies_file_edit: QLineEdit | None = None
+        self.cookies_file_btn: QPushButton | None = None
+        self.cookies_browser_combo: QComboBox | None = None
 
         self.out_edit = QLineEdit("outputs")
         self.config_edit = QLineEdit("config.json")
@@ -352,6 +357,9 @@ class FluentMedia2TextWindow(QMainWindow):
         self.timeout_edit = QLineEdit("20")
         self.user_agent_edit = QLineEdit("")
         self.failed_log_edit = QLineEdit("")
+        self.cookies_file_edit = QLineEdit("")
+        self.cookies_file_btn = QPushButton("选择")
+        self.cookies_browser_combo = QComboBox()
         self.force_seen_chk = QCheckBox("已下载项按强制重下处理")
         self.keep_video_chk = QCheckBox("下载视频")
         self.export_audio_chk = QCheckBox("导出处理后音频")
@@ -370,6 +378,8 @@ class FluentMedia2TextWindow(QMainWindow):
 
         self._build_ui()
         self._bind_signals()
+        self._load_cookie_defaults()
+        self._update_cookie_controls()
 
     def _build_ui(self) -> None:
         container = QWidget(self)
@@ -650,7 +660,32 @@ class FluentMedia2TextWindow(QMainWindow):
         adv_layout.addWidget(failed_btn, 6, 3)
         adv_layout.addWidget(QLabel("User-Agent"), 7, 0)
         adv_layout.addWidget(self.user_agent_edit, 7, 1, 1, 3)
-        adv_layout.setRowStretch(8, 1)
+        cookie_box = QGroupBox("账号验证 / Cookie")
+        cookie_layout = QGridLayout(cookie_box)
+        self.cookie_mode_combo = QComboBox()
+        self.cookie_mode_combo.addItem("不使用 Cookie", "none")
+        self.cookie_mode_combo.addItem("导入 cookies.txt", "cookies_file")
+        self.cookie_mode_combo.addItem("从浏览器读取", "browser")
+        if self.cookies_browser_combo:
+            self.cookies_browser_combo.addItem("Chrome", "chrome")
+            self.cookies_browser_combo.addItem("Edge", "edge")
+            self.cookies_browser_combo.addItem("Firefox", "firefox")
+        if self.cookies_file_btn:
+            self.cookies_file_btn.clicked.connect(self._choose_cookies_file)
+        self.cookie_mode_combo.currentIndexChanged.connect(self._update_cookie_controls)
+        cookie_layout.addWidget(QLabel("Cookie 使用方式"), 0, 0)
+        cookie_layout.addWidget(self.cookie_mode_combo, 0, 1, 1, 2)
+        cookie_layout.addWidget(QLabel("Cookie 文件"), 1, 0)
+        cookie_layout.addWidget(self.cookies_file_edit, 1, 1)
+        cookie_layout.addWidget(self.cookies_file_btn, 1, 2)
+        cookie_layout.addWidget(QLabel("浏览器"), 2, 0)
+        cookie_layout.addWidget(self.cookies_browser_combo, 2, 1, 1, 2)
+        cookie_hint = QLabel("用于处理需要登录、权限验证或防盗链的视频资源。Cookie 只保存在本地配置中。")
+        cookie_hint.setWordWrap(True)
+        cookie_hint.setObjectName("HintLabel")
+        cookie_layout.addWidget(cookie_hint, 3, 0, 1, 3)
+        adv_layout.addWidget(cookie_box, 8, 0, 1, 4)
+        adv_layout.setRowStretch(9, 1)
         tabs.addTab(advanced_tab, "组件 / 高级")
 
         return card
@@ -1642,6 +1677,34 @@ class FluentMedia2TextWindow(QMainWindow):
         if path:
             self.failed_log_edit.setText(path)
 
+    def _choose_cookies_file(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, "选择 cookies.txt", "", "Cookies (*.txt);;所有文件 (*.*)")
+        if path and self.cookies_file_edit:
+            self.cookies_file_edit.setText(path)
+
+    def _update_cookie_controls(self) -> None:
+        mode = str(self.cookie_mode_combo.currentData() if self.cookie_mode_combo else "none")
+        use_file = mode == "cookies_file"
+        use_browser = mode == "browser"
+        if self.cookies_file_edit:
+            self.cookies_file_edit.setEnabled(use_file)
+        if self.cookies_file_btn:
+            self.cookies_file_btn.setEnabled(use_file)
+        if self.cookies_browser_combo:
+            self.cookies_browser_combo.setEnabled(use_browser)
+
+    def _load_cookie_defaults(self) -> None:
+        config_path = Path(self.config_edit.text().strip() or "config.json").expanduser()
+        if not config_path.is_absolute():
+            config_path = (Path.cwd() / config_path).resolve()
+        cfg = load_config(config_path if config_path.exists() else None)
+        if self.cookie_mode_combo:
+            self._set_combo_by_data(self.cookie_mode_combo, getattr(cfg.download, "cookie_mode", "none"))
+        if self.cookies_file_edit:
+            self.cookies_file_edit.setText(getattr(cfg.download, "cookies_file", "") or "")
+        if self.cookies_browser_combo:
+            self._set_combo_by_data(self.cookies_browser_combo, getattr(cfg.download, "cookies_browser", "chrome"))
+
     def _update_task_strategy_hint(self) -> None:
         if not self.task_strategy_hint:
             return
@@ -1788,6 +1851,12 @@ class FluentMedia2TextWindow(QMainWindow):
         cfg.download.allow_separate_streams = allow_separate
         cfg.download.js_runtimes = self._split_csv(self.js_runtime_edit.text().strip(), ["deno", "node"])
         cfg.download.remote_components = self._split_csv(self.remote_component_edit.text().strip(), ["ejs:github"])
+        if self.cookie_mode_combo:
+            cfg.download.cookie_mode = str(self.cookie_mode_combo.currentData() or "none")
+        if self.cookies_file_edit:
+            cfg.download.cookies_file = self.cookies_file_edit.text().strip()
+        if self.cookies_browser_combo:
+            cfg.download.cookies_browser = str(self.cookies_browser_combo.currentData() or "chrome")
         cfg.scraping.download_archive = self.archive_edit.text().strip() or cfg.scraping.download_archive
         cfg.scraping.user_agent = self.user_agent_edit.text().strip() or cfg.scraping.user_agent
         cfg.scraping.request_timeout_seconds = self._safe_int(self.timeout_edit.text().strip(), 20, min_value=1)
@@ -1860,6 +1929,7 @@ class FluentMedia2TextWindow(QMainWindow):
         self._append_log(f"[INFO] 输出目录: {output_root}")
         self._append_log("[INFO] 解析完成后会切换到候选选择阶段。")
 
+        self._clear_candidate_state(reset_context=True)
         self._parsed_input_items = input_items
 
         if mode == "link":
@@ -1923,6 +1993,9 @@ class FluentMedia2TextWindow(QMainWindow):
         output_root: Path,
         config_path: Path,
     ) -> None:
+        self._clear_candidate_state(reset_context=True)
+        self._candidate_scan_token += 1
+        scan_token = self._candidate_scan_token
         self._append_log("[INFO] 开始扫描候选链接...")
         self._set_step(UiStep.PROCESSING)
         self._set_preparation_progress(0, len(input_items), "正在准备任务")
@@ -1946,16 +2019,18 @@ class FluentMedia2TextWindow(QMainWindow):
                         "index": idx,
                         "total": total_inputs,
                         "stage": "正在识别直接媒体链接",
+                        "token": scan_token,
                     }
                 )
                 if not is_url(raw):
                     if self._is_valid_cli_input(raw):
-                        direct_inputs.append(raw)
+                        candidate_urls.append((raw, raw))
                     else:
                         self.candidate_scan_finished.emit(
                             {
                                 "warn": f"[WARN] 已忽略非链接/非本地路径的显示文本，不会传给 --input: {raw}",
                                 "done": False,
+                                "token": scan_token,
                             }
                         )
                     continue
@@ -1969,6 +2044,7 @@ class FluentMedia2TextWindow(QMainWindow):
                             "total": total_inputs,
                             "stage": "正在跳过网页扫描",
                             "done": False,
+                            "token": scan_token,
                         }
                     )
                     continue
@@ -1980,6 +2056,7 @@ class FluentMedia2TextWindow(QMainWindow):
                             "total": total_inputs,
                             "stage": "正在扫描网页候选",
                             "done": False,
+                            "token": scan_token,
                         }
                     )
                     found = discover_targets(
@@ -1995,6 +2072,7 @@ class FluentMedia2TextWindow(QMainWindow):
                         {
                             "warn": f"[WARN] 候选扫描失败，回退直接链接: {raw} ({exc})",
                             "done": False,
+                            "token": scan_token,
                         }
                     )
 
@@ -2013,6 +2091,7 @@ class FluentMedia2TextWindow(QMainWindow):
                 "candidate_urls": candidate_urls,
                 "config_path": config_path,
                 "done": True,
+                "token": scan_token,
             }
             self.candidate_scan_finished.emit(payload)
 
@@ -2025,18 +2104,21 @@ class FluentMedia2TextWindow(QMainWindow):
         output_root: Path,
         config_path: Path,
     ) -> None:
+        self._clear_candidate_state(reset_context=True)
+        self._candidate_scan_token += 1
         archive_path = Path(cfg.scraping.download_archive).expanduser()
         if not archive_path.is_absolute():
             archive_path = (output_root / "后台数据" / archive_path).resolve()
 
-        self._candidate_items.clear()
-        self._candidate_order.clear()
         for idx, item in enumerate(input_items, start=1):
+            if not self._is_valid_cli_input(item):
+                self._append_log(f"[WARN] 已忽略非本地路径，不会加入候选: {item}")
+                continue
             item_id = f"local-{idx}"
-            title = Path(item).name or item
+            title = Path(item).stem or Path(item).name or item
             self._candidate_items[item_id] = CandidateItem(
                 item_id=item_id,
-                source_url=item,
+                source_url="",
                 url=item,
                 is_seen=False,
                 checked=True,
@@ -2046,11 +2128,15 @@ class FluentMedia2TextWindow(QMainWindow):
             self._candidate_order.append(item_id)
 
         self._pending_run_context = (cfg, output_root, archive_path, [], config_path)
+        if not self._candidate_order:
+            self._append_log("[WARN] 未发现候选，请检查输入。")
         self._show_candidates()
         self._append_log(f"[INFO] 本地输入解析完成：{len(self._candidate_order)} 条。")
 
     def _on_candidate_scan_finished(self, payload: object) -> None:
         if not isinstance(payload, dict):
+            return
+        if int(payload.get("token") or 0) != self._candidate_scan_token:
             return
         if payload.get("progress"):
             self._set_preparation_progress(
@@ -2077,38 +2163,54 @@ class FluentMedia2TextWindow(QMainWindow):
         config_path = payload["config_path"]
 
         if not candidate_urls:
-            self._append_log("[INFO] 未发现候选，直接执行输入项。")
-            self._start_run_process(cfg, config_path, output_root, direct_inputs, force_keys=set())
+            self._clear_candidate_state(reset_context=False)
+            self._pending_run_context = (cfg, output_root, archive_path, direct_inputs, config_path)
+            self._append_log("[WARN] 未发现候选，请检查输入。")
+            self._show_candidates()
             return
 
-        self._candidate_items.clear()
-        self._candidate_order.clear()
+        self._clear_candidate_state(reset_context=False)
         for idx, (source_url, target_url) in enumerate(candidate_urls, start=1):
-            key = dedup_key(target_url)
-            is_seen = key in seen_keys
-            item_id = f"cand-{idx}"
-            title = self._build_candidate_fallback_title(
+            is_local = not is_url(target_url)
+            key = dedup_key(target_url) if not is_local else target_url
+            is_seen = (not is_local) and key in seen_keys
+            item_id = f"{'local' if is_local else 'cand'}-{idx}"
+            title = Path(target_url).stem if is_local else self._build_candidate_fallback_title(
                 source_url=source_url,
                 target_url=target_url,
                 index=idx,
             )
             self._candidate_items[item_id] = CandidateItem(
                 item_id=item_id,
-                source_url=source_url,
+                source_url="" if is_local else source_url,
                 url=target_url,
                 is_seen=is_seen,
                 checked=not is_seen,
                 title=title,
-                source_kind="url",
+                source_kind="local" if is_local else "url",
             )
             self._candidate_order.append(item_id)
 
         self._pending_run_context = (cfg, output_root, archive_path, direct_inputs, config_path)
+        if not self._validate_candidate_scope():
+            self._clear_candidate_state(reset_context=True)
+            self._append_log("[WARN] 候选来源与当前输入不一致，已阻止显示旧候选，请重新解析。")
+            QMessageBox.warning(self, "候选已过期", "候选来源与当前输入不一致，已清空候选。请重新点击“开始解析”。")
+            self._set_step(UiStep.INPUT)
+            self._set_running_state(False)
+            return
         self._show_candidates()
         self._append_log(f"[INFO] 候选发现完成：{len(self._candidate_order)} 条。")
 
     def _show_candidates(self) -> None:
         if not self.candidate_group or not self.candidate_table:
+            return
+        if not self._validate_candidate_scope():
+            self._clear_candidate_state(reset_context=True)
+            self._append_log("[WARN] 候选来源与当前输入不一致，已阻止进入候选页。")
+            QMessageBox.warning(self, "候选已过期", "候选来源与当前输入不一致，已清空候选。请重新点击“开始解析”。")
+            self._set_step(UiStep.INPUT)
+            self._set_running_state(False)
             return
         self._candidate_mode_active = True
         self._refresh_candidate_table()
@@ -2125,19 +2227,27 @@ class FluentMedia2TextWindow(QMainWindow):
             self._prefetch_meta(first_id)
             for item_id in self._candidate_order[1:4]:
                 self._prefetch_meta(item_id)
+        else:
+            self._reset_preview("未发现候选，请检查输入。")
 
         self._set_running_state(False)
 
-    def _hide_candidates(self) -> None:
+    def _clear_candidate_state(self, reset_context: bool) -> None:
         self._candidate_mode_active = False
-        self._pending_run_context = None
+        if reset_context:
+            self._pending_run_context = None
         self._candidate_items.clear()
         self._candidate_order.clear()
         self._candidate_rows.clear()
         if self.candidate_model:
             self.candidate_model.reset_rows()
+        if self.candidate_table:
+            self.candidate_table.clearSelection()
         self._update_summary()
         self._reset_preview()
+
+    def _hide_candidates(self) -> None:
+        self._clear_candidate_state(reset_context=True)
         self._set_step(UiStep.INPUT)
         self._set_running_state(False)
 
@@ -2156,13 +2266,12 @@ class FluentMedia2TextWindow(QMainWindow):
 
     def _candidate_status_text(self, item: CandidateItem) -> str:
         if item.source_kind == "local":
-            return "本地文件"
+            return "未处理"
         return "已下载" if item.is_seen else "未下载"
 
     def _candidate_source_text(self, item: CandidateItem) -> str:
         if item.source_kind == "local":
-            parent_name = Path(item.url).parent.name.strip()
-            return parent_name or "local"
+            return "本地文件"
         host = urlparse(item.url).netloc.lower().replace("www.", "").strip()
         return host or "web"
 
@@ -2181,12 +2290,12 @@ class FluentMedia2TextWindow(QMainWindow):
         selected = sum(1 for item_id in self._candidate_order if self._candidate_items[item_id].checked)
         self.candidate_summary.setText(f"共 {total} 条，已选择 {selected} 条")
 
-    def _reset_preview(self) -> None:
+    def _reset_preview(self, title: str = "未选择候选视频") -> None:
         if self.preview_image:
             self.preview_image.setPixmap(QPixmap())
             self.preview_image.setText("暂无封面")
         if self.preview_title:
-            self.preview_title.setText("未选择候选视频")
+            self.preview_title.setText(title)
         if self.preview_status:
             self.preview_status.setText("")
         if self.preview_url:
@@ -2228,7 +2337,7 @@ class FluentMedia2TextWindow(QMainWindow):
             self.preview_title.setText(item.title)
         if self.preview_status:
             if item.source_kind == "local":
-                self.preview_status.setText("本地文件 | 可直接进行转写/导出")
+                self.preview_status.setText("未处理 | 本地文件")
             else:
                 host = urlparse(item.source_url).netloc or "unknown"
                 self.preview_status.setText(self._candidate_status_text(item) + f" | 来源页: {host}")
@@ -2280,12 +2389,15 @@ class FluentMedia2TextWindow(QMainWindow):
 
         _cfg, _output_root, _archive_path, direct_inputs, _config_path = context
         picked: list[str] = []
+        source_pages: dict[str, str] = {}
         force_keys: set[str] = set()
         for item_id in self._candidate_order:
             item = self._candidate_items[item_id]
             if not item.checked:
                 continue
             picked.append(item.url)
+            if item.source_url and item.source_url != item.url:
+                source_pages[item.url] = item.source_url
             if item.is_seen and self.force_seen_chk.isChecked():
                 force_keys.add(dedup_key(item.url))
 
@@ -2296,7 +2408,21 @@ class FluentMedia2TextWindow(QMainWindow):
         run_items = [*direct_inputs, *picked]
         self._candidate_mode_active = False
         cfg, config_path, output_root = self._build_runtime_config(use_task_overrides=True)
-        self._start_run_process(cfg, config_path, output_root, run_items, force_keys)
+        self._start_run_process(cfg, config_path, output_root, run_items, force_keys, source_pages=source_pages)
+
+    def _validate_candidate_scope(self) -> bool:
+        if not self._candidate_order:
+            return True
+        parsed_inputs = {item.strip() for item in self._parsed_input_items if item.strip()}
+        if not parsed_inputs:
+            return True
+        local_inputs = {item for item in parsed_inputs if not is_url(item) and self._is_valid_cli_input(item)}
+        if local_inputs and len(local_inputs) == len(parsed_inputs):
+            for item_id in self._candidate_order:
+                item = self._candidate_items.get(item_id)
+                if not item or item.source_kind != "local" or item.url not in local_inputs or item.source_url:
+                    return False
+        return True
 
     def _back_from_candidates(self) -> None:
         self._append_log("[INFO] 已返回输入编辑。")
@@ -2450,6 +2576,7 @@ class FluentMedia2TextWindow(QMainWindow):
         output_root: Path,
         input_items: list[str],
         force_keys: set[str],
+        source_pages: dict[str, str] | None = None,
     ) -> None:
         if not input_items:
             QMessageBox.warning(self, "提示", "没有可执行输入项。")
@@ -2514,6 +2641,12 @@ class FluentMedia2TextWindow(QMainWindow):
             cmd.extend(["--remote-component", component])
         for key in sorted(force_keys):
             cmd.extend(["--force-key", key])
+        if cfg.download.cookie_mode == "cookies_file" and cfg.download.cookies_file:
+            cmd.extend(["--cookies-file", cfg.download.cookies_file])
+        elif cfg.download.cookie_mode == "browser" and cfg.download.cookies_browser:
+            cmd.extend(["--cookies-from-browser", cfg.download.cookies_browser])
+        for media_url, page_url in sorted((source_pages or {}).items()):
+            cmd.extend(["--source-page", f"{media_url}||{page_url}"])
         valid_inputs: list[str] = []
         for item in input_items:
             if not self._is_valid_cli_input(item):
@@ -2531,10 +2664,14 @@ class FluentMedia2TextWindow(QMainWindow):
     def _launch_process(self, cmd: list[str]) -> None:
         if self.proc is not None and self.proc.state() != QProcess.NotRunning:
             return
-        self._append_log(f"[INFO] 启动命令: {' '.join(cmd)}")
+        self._append_log(f"[INFO] 启动命令: {' '.join(self._redact_command_for_log(cmd))}")
         self._set_processing_stage("进程已启动，等待后端返回任务列表")
 
         proc = QProcess(self)
+        env = QProcessEnvironment.systemEnvironment()
+        env.insert("PYTHONIOENCODING", "utf-8")
+        env.insert("PYTHONUTF8", "1")
+        proc.setProcessEnvironment(env)
         proc.setProcessChannelMode(QProcess.MergedChannels)
         proc.readyReadStandardOutput.connect(self._on_process_output)
         proc.finished.connect(self._on_process_finished)
@@ -2543,6 +2680,20 @@ class FluentMedia2TextWindow(QMainWindow):
         self.proc = proc
         self._set_running_state(True)
         proc.start(cmd[0], cmd[1:])
+
+    @staticmethod
+    def _redact_command_for_log(cmd: list[str]) -> list[str]:
+        redacted: list[str] = []
+        hide_next = False
+        for part in cmd:
+            if hide_next:
+                redacted.append("<hidden>")
+                hide_next = False
+                continue
+            redacted.append(part)
+            if part in {"--cookies-file", "--source-page"}:
+                hide_next = True
+        return redacted
 
     def _on_process_output(self) -> None:
         if self.proc is None:
@@ -2688,6 +2839,19 @@ class FluentMedia2TextWindow(QMainWindow):
             manifest_path = legacy_system_path if legacy_system_path.exists() else self.current_output_root / "manifest.jsonl"
         return [row for row in read_jsonl(manifest_path) if row.get("run_id") == self.current_run_id]
 
+    @staticmethod
+    def _friendly_failure_reason(error: str, retry_suggestion: str = "") -> str:
+        text = (error or "").strip()
+        low = text.lower()
+        if any(token in low for token in ("403", "401", "forbidden", "access denied", "url expired")):
+            message = "服务器拒绝访问，可能需要来源页 Referer、Cookie，或视频链接已经过期。"
+            if "已尝试来源页 referer" in low or "source-page referer" in low:
+                message += " 已尝试来源页回退但仍失败。"
+            if retry_suggestion:
+                message += f" 建议：{retry_suggestion}"
+            return message
+        return text or retry_suggestion or "未记录错误原因"
+
     def _primary_result_file(self) -> Path | None:
         priority = ("audio", "txt", "srt", "media")
         for row in self._current_run_rows():
@@ -2746,7 +2910,10 @@ class FluentMedia2TextWindow(QMainWindow):
             for index, row in enumerate(failures, start=1):
                 source = str(row.get("retry_input") or row.get("resolved_input") or row.get("source") or "unknown")
                 stage = str(row.get("stage") or "unknown")
-                error = str(row.get("error") or "未记录错误原因")
+                error = self._friendly_failure_reason(
+                    str(row.get("error") or ""),
+                    str(row.get("retry_suggestion") or ""),
+                )
                 lines.append(f"{index}. {source}")
                 lines.append(f"   阶段：{stage}")
                 lines.append(f"   原因：{error}")
