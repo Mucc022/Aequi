@@ -325,6 +325,7 @@ class FluentMedia2TextWindow(QMainWindow):
         self.task_save_metadata_chk: QCheckBox | None = None
         self.task_export_audio_chk: QCheckBox | None = None
         self.task_download_subtitle_chk: QCheckBox | None = None
+        self.task_download_pdf_chk: QCheckBox | None = None
         self.task_export_text_chk: QCheckBox | None = None
         self.task_strategy_hint: QLabel | None = None
         self.task_media_retention_combo: QComboBox | None = None
@@ -892,12 +893,15 @@ class FluentMedia2TextWindow(QMainWindow):
         self.task_save_metadata_chk.setToolTip("保存这条资料的标题、原始链接、平台信息和处理记录，方便以后追溯来源。")
         self.task_export_audio_chk = QCheckBox("导出音频")
         self.task_download_subtitle_chk = QCheckBox("下载字幕")
+        self.task_download_pdf_chk = QCheckBox("下载PDF")
         self.task_export_text_chk = QCheckBox("导出文本")
         self.task_download_subtitle_chk.setChecked(True)
+        self.task_download_pdf_chk.setChecked(True)
         self.task_export_text_chk.setChecked(True)
         for checkbox in (
             self.task_keep_video_chk,
             self.task_download_subtitle_chk,
+            self.task_download_pdf_chk,
             self.task_export_audio_chk,
             self.task_export_text_chk,
         ):
@@ -905,8 +909,9 @@ class FluentMedia2TextWindow(QMainWindow):
             checkbox.stateChanged.connect(lambda _state: self._update_task_strategy_hint())
         core_layout.addWidget(self.task_keep_video_chk, 0, 0)
         core_layout.addWidget(self.task_download_subtitle_chk, 0, 1)
-        core_layout.addWidget(self.task_export_audio_chk, 1, 0)
+        core_layout.addWidget(self.task_download_pdf_chk, 1, 0)
         core_layout.addWidget(self.task_export_text_chk, 1, 1)
+        core_layout.addWidget(self.task_export_audio_chk, 2, 0)
         root.addWidget(core_group)
 
         self.task_media_retention_combo = QComboBox()
@@ -1712,6 +1717,7 @@ class FluentMedia2TextWindow(QMainWindow):
         hints: list[str] = []
         wants_video = bool(self.task_keep_video_chk and self.task_keep_video_chk.isChecked())
         wants_subtitle = bool(self.task_download_subtitle_chk and self.task_download_subtitle_chk.isChecked())
+        wants_pdf = bool(self.task_download_pdf_chk and self.task_download_pdf_chk.isChecked())
         wants_audio = bool(self.task_export_audio_chk and self.task_export_audio_chk.isChecked())
         wants_text = bool(self.task_export_text_chk and self.task_export_text_chk.isChecked())
         strategy = str(self.task_subtitle_strategy_combo.currentData() if self.task_subtitle_strategy_combo else "")
@@ -1728,6 +1734,8 @@ class FluentMedia2TextWindow(QMainWindow):
             hints.append("不保留视频时，输出目录只留下你选择的最终结果。")
         if not wants_text:
             hints.append("未勾选导出文本时，文本格式选择不会参与本次任务。")
+        if self._has_document_candidates() and not wants_pdf:
+            hints.append("未勾选下载PDF时，已选 PDF 候选会在开始处理时跳过。")
 
         self.task_strategy_hint.setText(" ".join(hints) if hints else "当前选择会按默认智能策略处理。")
 
@@ -1751,6 +1759,11 @@ class FluentMedia2TextWindow(QMainWindow):
             self.task_export_audio_chk.setChecked(self.export_audio_chk.isChecked())
         if self.task_download_subtitle_chk:
             self.task_download_subtitle_chk.setChecked(True)
+        has_documents = self._has_document_candidates()
+        if self.task_download_pdf_chk:
+            self.task_download_pdf_chk.setChecked(True)
+            self.task_download_pdf_chk.setEnabled(has_documents)
+            self.task_download_pdf_chk.setToolTip("当前候选中包含 PDF 时启用；取消后不会下载/归档 PDF 候选。")
         if self.task_export_text_chk:
             self.task_export_text_chk.setChecked(True)
         if self.task_media_retention_combo:
@@ -2281,6 +2294,12 @@ class FluentMedia2TextWindow(QMainWindow):
         host = urlparse(item.url).netloc.lower().replace("www.", "").strip()
         return host or "web"
 
+    def _has_document_candidates(self) -> bool:
+        return any(
+            (item := self._candidate_items.get(item_id)) is not None and item.source_kind == "document"
+            for item_id in self._candidate_order
+        )
+
     def _build_thumb_icon(self, item: CandidateItem) -> QIcon | None:
         if not item.thumb_bytes:
             return None
@@ -2402,6 +2421,8 @@ class FluentMedia2TextWindow(QMainWindow):
         for item_id in self._candidate_order:
             item = self._candidate_items[item_id]
             if not item.checked:
+                continue
+            if item.source_kind == "document" and self.task_download_pdf_chk and not self.task_download_pdf_chk.isChecked():
                 continue
             picked.append(item.url)
             if item.source_url and item.source_url != item.url:
