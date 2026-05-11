@@ -3,6 +3,7 @@
 import logging
 import hashlib
 import re
+import shutil
 import tempfile
 import time
 import uuid
@@ -10,13 +11,16 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Callable, Iterable
+from urllib.parse import unquote, urlparse
 
+import requests
 from yt_dlp.utils import DownloadError
 
 from .config import AppConfig
-from .ffmpeg_utils import discover_local_media, extract_audio_to_file, extract_audio_to_wav
+from .ffmpeg_utils import discover_local_documents, discover_local_media, extract_audio_to_file, extract_audio_to_wav
 from .io_utils import (
     append_jsonl,
+    is_direct_document_url,
     is_direct_media_url,
     is_url,
     normalize_platform,
@@ -50,7 +54,7 @@ class TaskFailure(RuntimeError):
 class SourceTask:
     source: str
     resolved_input: str
-    source_type: str  # local_file/url
+    source_type: str  # local_file/local_document/url
     source_page: str = ""
 
 
@@ -175,10 +179,19 @@ class MediaOrchestrator:
                 continue
 
             media_files = discover_local_media(path)
-            if not media_files:
+            document_files = discover_local_documents(path)
+            if not media_files and not document_files:
                 expanded.append(SourceTask(source=item, resolved_input=str(path.resolve()), source_type="missing"))
                 continue
 
+            for document_file in document_files:
+                expanded.append(
+                    SourceTask(
+                        source=item,
+                        resolved_input=str(document_file.resolve()),
+                        source_type="local_document",
+                    )
+                )
             for media_file in media_files:
                 expanded.append(
                     SourceTask(
@@ -392,7 +405,12 @@ class MediaOrchestrator:
         if task.source_type == "local_file":
             return self._process_local(task, task_id, task_index)
 
+        if task.source_type == "local_document":
+            return self._process_local_document(task, task_id, task_index)
+
         if task.source_type == "url":
+            if is_direct_document_url(task.resolved_input):
+                return self._process_url_document(task, task_id, task_index)
             return self._process_url(task, task_id, task_index)
 
         raise RuntimeError(f"Unsupported task type: {task.source_type}")
@@ -460,6 +478,153 @@ class MediaOrchestrator:
             save_json(meta_path, record)
             self._record_artifact(task_id, meta_path, "json")
         return record
+
+    def _process_local_document(self, task: SourceTask, task_id: str, task_index: int) -> dict:
+        document_path = Path(task.resolved_input)
+        date_str = datetime.now().strftime("%y-%m-%d")
+        title = document_path.stem
+        paths = self._build_output_paths(task=task, task_index=task_index, date_str=date_str, title=title)
+        base_name = str(paths["base_name"])
+        output_path = Path(paths["result_dir"]) / f"{base_name}{document_path.suffix.lower() or '.pdf'}"
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        self._log("  copying PDF document...")
+        if document_path.resolve() != output_path.resolve():
+            shutil.copy2(document_path, output_path)
+        self._record_artifact(task_id, output_path, "document")
+
+        meta_path = Path(paths["metadata_dir"]) / f"{base_name}.json"
+        record = {
+            "run_id": self.run_id,
+            "task_id": task_id,
+            "candidate_index": int(paths["candidate_index"]),
+            "candidate_title": str(paths["candidate_title"]),
+            "result_index": int(paths["result_index"]),
+            "source": task.source,
+            "source_page": task.source_page,
+            "original_url": "",
+            "resolved_input": task.resolved_input,
+            "platform": "local",
+            "title": title,
+            "date": date_str,
+            "content_type": "document/pdf",
+            "transcript_source": "none",
+            "status": "success",
+            "artifacts": {
+                "document": str(output_path),
+                "json": str(meta_path) if self.config.download.save_metadata else "",
+            },
+            "output_audio_path": "",
+            "error": "",
+            "created_at": datetime.now().isoformat(timespec="seconds"),
+        }
+        if self.config.download.save_metadata:
+            save_json(meta_path, record)
+            self._record_artifact(task_id, meta_path, "json")
+        return record
+
+    def _process_url_document(self, task: SourceTask, task_id: str, task_index: int) -> dict:
+        key = dedup_key(task.resolved_input)
+        if key in self.seen_keys and key not in self.force_keys:
+            return {
+                "run_id": self.run_id,
+                "task_id": task_id,
+                "candidate_index": task_index,
+                "candidate_title": "",
+                "source": task.source,
+                "source_page": task.source_page,
+                "original_url": task.resolved_input,
+                "resolved_input": task.resolved_input,
+                "status": "skipped",
+                "stage": "dedup",
+                "error": "Already downloaded",
+                "created_at": datetime.now().isoformat(timespec="seconds"),
+            }
+
+        date_str = datetime.now().strftime("%y-%m-%d")
+        title = self._document_title_from_url(task.resolved_input)
+        paths = self._build_output_paths(task=task, task_index=task_index, date_str=date_str, title=title)
+        base_name = str(paths["base_name"])
+        output_path = Path(paths["result_dir"]) / f"{base_name}.pdf"
+        meta_path = Path(paths["metadata_dir"]) / f"{base_name}.json"
+        referer = task.source_page if task.source_page and task.source_page != task.resolved_input else None
+
+        self._log("  downloading PDF document...")
+        self._download_pdf_document(task.resolved_input, output_path, referer=referer)
+        self._record_artifact(task_id, output_path, "document")
+
+        if key not in self.seen_keys:
+            self.seen_keys.add(key)
+            append_seen_archive(self.archive_path, key, task.resolved_input)
+
+        record = {
+            "run_id": self.run_id,
+            "task_id": task_id,
+            "candidate_index": int(paths["candidate_index"]),
+            "candidate_title": str(paths["candidate_title"]),
+            "result_index": int(paths["result_index"]),
+            "source": task.source,
+            "source_page": task.source_page,
+            "original_url": task.resolved_input,
+            "resolved_input": task.resolved_input,
+            "platform": normalize_platform(task.resolved_input),
+            "title": title,
+            "date": date_str,
+            "content_type": "document/pdf",
+            "transcript_source": "none",
+            "status": "success",
+            "artifacts": {
+                "document": str(output_path),
+                "json": str(meta_path) if self.config.download.save_metadata else "",
+            },
+            "output_audio_path": "",
+            "error": "",
+            "created_at": datetime.now().isoformat(timespec="seconds"),
+        }
+        if self.config.download.save_metadata:
+            save_json(meta_path, record)
+            self._record_artifact(task_id, meta_path, "json")
+        return record
+
+    @staticmethod
+    def _document_title_from_url(url: str) -> str:
+        parsed = urlparse(url)
+        name = unquote(Path(parsed.path).stem).strip()
+        return name or parsed.netloc or "document"
+
+    def _download_pdf_document(self, url: str, output_path: Path, referer: str | None = None) -> None:
+        headers = {"User-Agent": self.config.scraping.user_agent}
+        if referer:
+            headers["Referer"] = referer
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with requests.get(url, timeout=self.config.scraping.request_timeout_seconds, headers=headers, stream=True) as response:
+                response.raise_for_status()
+                content_type = response.headers.get("Content-Type", "").lower()
+                if "pdf" not in content_type and not is_direct_document_url(url):
+                    raise TaskFailure(
+                        f"URL did not return a PDF document: Content-Type={content_type or 'unknown'}",
+                        stage="download",
+                        retry_suggestion="Check that the link points directly to a PDF file.",
+                    )
+                with output_path.open("wb") as fh:
+                    for chunk in response.iter_content(chunk_size=1024 * 256):
+                        if chunk:
+                            fh.write(chunk)
+        except TaskFailure:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            if self._is_access_denied_error(exc):
+                attempted_referer = bool(referer)
+                raise TaskFailure(
+                    f"Failed downloading PDF: {self._access_denied_message(exc, url, attempted_referer)}",
+                    stage="download",
+                    retry_suggestion=self._cookie_status_text(),
+                ) from exc
+            raise TaskFailure(
+                f"Failed downloading PDF: {exc}",
+                stage="download",
+                retry_suggestion="Retry later or open the PDF link in a browser to confirm it is accessible.",
+            ) from exc
 
     def _process_url(self, task: SourceTask, task_id: str, task_index: int) -> dict:
         key = dedup_key(task.resolved_input)

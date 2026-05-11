@@ -29,6 +29,8 @@ MEDIA_EXTENSIONS = {
     ".amr",
 }
 
+DOCUMENT_EXTENSIONS = {".pdf"}
+
 APPLE_MEMO_EXTENSIONS = {".m4a", ".caf"}
 
 
@@ -90,6 +92,17 @@ def discover_local_media(input_path: Path) -> list[Path]:
         return []
 
     files = [p for p in input_path.rglob("*") if p.is_file() and p.suffix.lower() in MEDIA_EXTENSIONS]
+    files.sort()
+    return files
+
+
+def discover_local_documents(input_path: Path) -> list[Path]:
+    if input_path.is_file():
+        return [input_path] if input_path.suffix.lower() in DOCUMENT_EXTENSIONS else []
+    if not input_path.is_dir():
+        return []
+
+    files = [p for p in input_path.rglob("*") if p.is_file() and p.suffix.lower() in DOCUMENT_EXTENSIONS]
     files.sort()
     return files
 

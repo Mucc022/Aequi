@@ -1,14 +1,16 @@
 # Aequora
 
-Aequora 是一个面向学习资料整理的本地工具。它可以从本地音频/视频文件、文件夹或网页链接中提取媒体内容，并按一次任务生成音频、字幕、文本和后台记录。
+Aequora 是一个面向学习资料整理的本地工具。它可以从本地音频/视频/PDF 文件、文件夹或网页链接中提取资料内容，并按一次任务生成音频、字幕、文本、PDF 文档和后台记录。
 
 当前版本以 Windows 桌面 GUI 为主，CLI 仍保留给开发调试和批量处理使用。
 
 ## 功能范围
 
 - 本地音频/视频文件处理。
+- 本地 PDF 文件归档。
 - 文件夹批量扫描。
-- 网页链接候选媒体发现。
+- 网页链接候选媒体 / PDF 发现。
+- PDF 直链下载。
 - 通过平台字幕或 Whisper 生成文本和字幕。
 - 可选导出处理后的音频文件。
 - 任务 manifest、失败日志、运行 ledger 记录。
@@ -84,6 +86,13 @@ CLI 入口由 `media_tool.py` 提供。
 .\.venv\Scripts\python.exe media_tool.py run --input "C:\Videos" --out "outputs"
 ```
 
+处理本地 PDF 或 PDF 链接：
+
+```powershell
+.\.venv\Scripts\python.exe media_tool.py run --input "C:\Docs\paper.pdf" --out "outputs" --subtitle-priority skip_text --text-output none --no-export-audio
+.\.venv\Scripts\python.exe media_tool.py run --input "https://example.com/paper.pdf" --out "outputs" --subtitle-priority skip_text --text-output none --no-export-audio
+```
+
 处理网页链接：
 
 ```powershell
@@ -135,7 +144,8 @@ outputs/
 ├─ 结果/
 │  ├─ *.mp3 / *.wav
 │  ├─ *.txt
-│  └─ *.srt
+│  ├─ *.srt
+│  └─ *.pdf
 └─ 后台数据/
    ├─ manifest.jsonl
    ├─ failed_tasks.jsonl

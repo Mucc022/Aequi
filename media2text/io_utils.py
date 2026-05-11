@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 INVALID_FILENAME_CHARS = re.compile(r'[<>:"/\\|?*]+')
 WHITESPACE = re.compile(r"\s+")
 DIRECT_MEDIA_EXTENSIONS = {".mp4", ".m4a", ".mp3", ".webm", ".mkv", ".mov", ".m3u8"}
+DOCUMENT_EXTENSIONS = {".pdf"}
 
 
 def is_url(value: str) -> bool:
@@ -21,6 +22,13 @@ def is_direct_media_url(value: str) -> bool:
         return False
     path = urlparse(value.strip()).path.lower()
     return any(path.endswith(ext) for ext in DIRECT_MEDIA_EXTENSIONS)
+
+
+def is_direct_document_url(value: str) -> bool:
+    if not is_url(value):
+        return False
+    path = urlparse(value.strip()).path.lower()
+    return any(path.endswith(ext) for ext in DOCUMENT_EXTENSIONS)
 
 
 def sanitize_filename(value: str, default: str = "untitled", max_len: int = 96) -> str:

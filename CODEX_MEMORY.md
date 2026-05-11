@@ -89,3 +89,4 @@ The next likely work is product optimization. Good starting areas:
 - Candidate scanning now uses `_candidate_scan_token`; stale async scan results from an older webpage task are ignored.
 - Local files now create local `CandidateItem` rows with `source_kind="local"`, an empty `source_url`, title from the file stem, source text `本地文件`, and status `未处理`.
 - CLI help description was renamed from `Unified Media2Text tool` to `Aequora media organizer`.
+- 2026-05-11: Added first-step multimodal PDF support. Local PDFs and direct PDF URLs are saved to the result directory as `artifacts.document` with `content_type=document/pdf`; page scanning also discovers `.pdf` links. PDF tasks do not run Whisper, subtitle download, or audio export.

@@ -22,7 +22,7 @@ except Exception:  # noqa: BLE001
 
 from .config import AppConfig, ensure_output_root, load_config
 from .ffmpeg_utils import check_ffmpeg_available
-from .io_utils import append_jsonl, is_direct_media_url, is_url, read_jsonl
+from .io_utils import append_jsonl, is_direct_document_url, is_direct_media_url, is_url, read_jsonl
 from .run_ledger import rollback_from_ledger
 from .scraper_engine import dedup_key, discover_targets, extract_youtube_video_id, load_seen_archive
 
@@ -2034,11 +2034,11 @@ class FluentMedia2TextWindow(QMainWindow):
                             }
                         )
                     continue
-                if is_direct_media_url(raw):
-                    direct_inputs.append(raw)
+                if is_direct_media_url(raw) or is_direct_document_url(raw):
+                    candidate_urls.append((raw, raw))
                     self.candidate_scan_finished.emit(
                         {
-                            "warn": f"[INFO] 检测到直接媒体链接，跳过网页扫描: {raw}",
+                            "warn": f"[INFO] 检测到直接资源链接，跳过网页扫描: {raw}",
                             "progress": True,
                             "index": idx,
                             "total": total_inputs,
@@ -2116,6 +2116,7 @@ class FluentMedia2TextWindow(QMainWindow):
                 continue
             item_id = f"local-{idx}"
             title = Path(item).stem or Path(item).name or item
+            source_kind = "document" if Path(item).suffix.lower() == ".pdf" else "local"
             self._candidate_items[item_id] = CandidateItem(
                 item_id=item_id,
                 source_url="",
@@ -2123,7 +2124,7 @@ class FluentMedia2TextWindow(QMainWindow):
                 is_seen=False,
                 checked=True,
                 title=title,
-                source_kind="local",
+                source_kind=source_kind,
             )
             self._candidate_order.append(item_id)
 
@@ -2172,9 +2173,10 @@ class FluentMedia2TextWindow(QMainWindow):
         self._clear_candidate_state(reset_context=False)
         for idx, (source_url, target_url) in enumerate(candidate_urls, start=1):
             is_local = not is_url(target_url)
+            is_document = (is_local and Path(target_url).suffix.lower() == ".pdf") or is_direct_document_url(target_url)
             key = dedup_key(target_url) if not is_local else target_url
             is_seen = (not is_local) and key in seen_keys
-            item_id = f"{'local' if is_local else 'cand'}-{idx}"
+            item_id = f"{'doc' if is_document else 'local' if is_local else 'cand'}-{idx}"
             title = Path(target_url).stem if is_local else self._build_candidate_fallback_title(
                 source_url=source_url,
                 target_url=target_url,
@@ -2187,7 +2189,7 @@ class FluentMedia2TextWindow(QMainWindow):
                 is_seen=is_seen,
                 checked=not is_seen,
                 title=title,
-                source_kind="local" if is_local else "url",
+                source_kind="document" if is_document else "local" if is_local else "url",
             )
             self._candidate_order.append(item_id)
 
@@ -2265,11 +2267,15 @@ class FluentMedia2TextWindow(QMainWindow):
         self._update_summary()
 
     def _candidate_status_text(self, item: CandidateItem) -> str:
+        if item.source_kind == "document":
+            return "未处理"
         if item.source_kind == "local":
             return "未处理"
         return "已下载" if item.is_seen else "未下载"
 
     def _candidate_source_text(self, item: CandidateItem) -> str:
+        if item.source_kind == "document":
+            return "PDF文档"
         if item.source_kind == "local":
             return "本地文件"
         host = urlparse(item.url).netloc.lower().replace("www.", "").strip()
@@ -2336,7 +2342,9 @@ class FluentMedia2TextWindow(QMainWindow):
         if self.preview_title:
             self.preview_title.setText(item.title)
         if self.preview_status:
-            if item.source_kind == "local":
+            if item.source_kind == "document":
+                self.preview_status.setText("未处理 | PDF文档")
+            elif item.source_kind == "local":
                 self.preview_status.setText("未处理 | 本地文件")
             else:
                 host = urlparse(item.source_url).netloc or "unknown"
@@ -2420,7 +2428,7 @@ class FluentMedia2TextWindow(QMainWindow):
         if local_inputs and len(local_inputs) == len(parsed_inputs):
             for item_id in self._candidate_order:
                 item = self._candidate_items.get(item_id)
-                if not item or item.source_kind != "local" or item.url not in local_inputs or item.source_url:
+                if not item or item.source_kind not in {"local", "document"} or item.url not in local_inputs or item.source_url:
                     return False
         return True
 
@@ -2430,7 +2438,7 @@ class FluentMedia2TextWindow(QMainWindow):
 
     def _prefetch_meta(self, item_id: str) -> None:
         item = self._candidate_items.get(item_id)
-        if not item or item.source_kind == "local" or item.meta_loaded or item.meta_loading:
+        if not item or item.source_kind in {"local", "document"} or item.meta_loaded or item.meta_loading:
             return
         item.meta_loading = True
 
@@ -2853,7 +2861,7 @@ class FluentMedia2TextWindow(QMainWindow):
         return text or retry_suggestion or "未记录错误原因"
 
     def _primary_result_file(self) -> Path | None:
-        priority = ("audio", "txt", "srt", "media")
+        priority = ("document", "audio", "txt", "srt", "media")
         for row in self._current_run_rows():
             if str(row.get("status") or "").lower() != "success":
                 continue
@@ -2929,6 +2937,7 @@ class FluentMedia2TextWindow(QMainWindow):
                     lines.append("- 未记录输出文件")
                     continue
                 artifact_labels = {
+                    "document": "文档",
                     "audio": "音频",
                     "srt": "字幕",
                     "txt": "文本",

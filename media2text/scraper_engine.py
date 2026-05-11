@@ -39,6 +39,7 @@ VIDEO_EXTENSIONS = (
     ".avi",
     ".flv",
 )
+DOCUMENT_EXTENSIONS = (".pdf",)
 
 URL_REGEX = re.compile(r"https?://[^\s\"'<>\\]+", re.IGNORECASE)
 ESCAPED_URL_REGEX = re.compile(r"https?:\\\\/\\\\/[^\s\"'<>]+", re.IGNORECASE)
@@ -92,6 +93,12 @@ def is_probably_video_url(url: str, page_host: str) -> bool:
         return True
 
     return False
+
+
+def is_probably_document_url(url: str) -> bool:
+    parsed = urlparse(url)
+    path = parsed.path.lower()
+    return any(path.endswith(ext) for ext in DOCUMENT_EXTENSIONS)
 
 
 def extract_youtube_video_id(url: str) -> str | None:
@@ -149,14 +156,14 @@ def extract_candidates(page_url: str, html_text: str) -> set[str]:
             if not raw_value:
                 continue
             normalized = normalize_url(page_url, raw_value)
-            if normalized and is_probably_video_url(normalized, page_host):
+            if normalized and (is_probably_video_url(normalized, page_host) or is_probably_document_url(normalized)):
                 canonical = canonicalize_video_candidate(normalized)
                 if canonical:
                     found.add(canonical)
 
     for match in URL_REGEX.findall(html_text):
         normalized = normalize_url(page_url, match)
-        if normalized and is_probably_video_url(normalized, page_host):
+        if normalized and (is_probably_video_url(normalized, page_host) or is_probably_document_url(normalized)):
             canonical = canonicalize_video_candidate(normalized)
             if canonical:
                 found.add(canonical)
@@ -212,14 +219,14 @@ def extract_candidates_from_thunderbolt_payloads(
         for match in ESCAPED_URL_REGEX.findall(body):
             decoded = match.replace("\\/", "/")
             normalized = normalize_url(page_url, decoded)
-            if normalized and is_probably_video_url(normalized, page_host):
+            if normalized and (is_probably_video_url(normalized, page_host) or is_probably_document_url(normalized)):
                 canonical = canonicalize_video_candidate(normalized)
                 if canonical:
                     found.add(canonical)
 
         for match in URL_REGEX.findall(body):
             normalized = normalize_url(page_url, match)
-            if normalized and is_probably_video_url(normalized, page_host):
+            if normalized and (is_probably_video_url(normalized, page_host) or is_probably_document_url(normalized)):
                 canonical = canonicalize_video_candidate(normalized)
                 if canonical:
                     found.add(canonical)
@@ -230,12 +237,12 @@ def extract_candidates_from_thunderbolt_payloads(
                 continue
             for match in URL_REGEX.findall(normalized_text):
                 normalized = normalize_url(page_url, match)
-                if normalized and is_probably_video_url(normalized, page_host):
+                if normalized and (is_probably_video_url(normalized, page_host) or is_probably_document_url(normalized)):
                     canonical = canonicalize_video_candidate(normalized)
                     if canonical:
                         found.add(canonical)
             normalized_direct = normalize_url(page_url, normalized_text)
-            if normalized_direct and is_probably_video_url(normalized_direct, page_host):
+            if normalized_direct and (is_probably_video_url(normalized_direct, page_host) or is_probably_document_url(normalized_direct)):
                 canonical = canonicalize_video_candidate(normalized_direct)
                 if canonical:
                     found.add(canonical)
@@ -259,8 +266,8 @@ def discover_targets(
     all_targets: set[str] = set()
 
     for page in pages:
-        if urlparse(page).path.lower().endswith(VIDEO_EXTENSIONS):
-            logger.info("检测到直接媒体链接，跳过网页扫描: %s", page)
+        if urlparse(page).path.lower().endswith(VIDEO_EXTENSIONS + DOCUMENT_EXTENSIONS):
+            logger.info("检测到直接资源链接，跳过网页扫描: %s", page)
             all_targets.add(page)
             continue
         logger.info("Scanning page: %s", page)
