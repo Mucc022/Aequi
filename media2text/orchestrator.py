@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Callable, Iterable
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlencode, urlparse, urlunparse
 
 import requests
 from yt_dlp.utils import DownloadError
@@ -523,7 +523,8 @@ class MediaOrchestrator:
         return record
 
     def _process_url_document(self, task: SourceTask, task_id: str, task_index: int) -> dict:
-        key = dedup_key(task.resolved_input)
+        download_url = self._normalize_document_download_url(task.resolved_input)
+        key = dedup_key(download_url)
         if key in self.seen_keys and key not in self.force_keys:
             return {
                 "run_id": self.run_id,
@@ -554,7 +555,7 @@ class MediaOrchestrator:
 
         if key not in self.seen_keys:
             self.seen_keys.add(key)
-            append_seen_archive(self.archive_path, key, task.resolved_input)
+            append_seen_archive(self.archive_path, key, download_url)
 
         record = {
             "run_id": self.run_id,
@@ -589,7 +590,48 @@ class MediaOrchestrator:
     def _document_title_from_url(url: str) -> str:
         parsed = urlparse(url)
         name = unquote(Path(parsed.path).stem).strip()
+        if name in {"view", "file", "d"}:
+            parts = [part for part in parsed.path.split("/") if part]
+            if len(parts) >= 3 and parts[0] == "file" and parts[1] == "d":
+                name = ""
         return name or parsed.netloc or "document"
+
+    @staticmethod
+    def _google_drive_file_id(url: str) -> str:
+        parsed = urlparse(url)
+        host = parsed.netloc.lower()
+        if "drive.google.com" not in host or parsed.scheme not in {"http", "https"}:
+            return ""
+        parts = [part for part in parsed.path.split("/") if part]
+        if len(parts) >= 3 and parts[0] == "file" and parts[1] == "d":
+            return parts[2].strip()
+        query = parse_qs(parsed.query)
+        return (query.get("id") or [""])[0].strip()
+
+    @classmethod
+    def _normalize_document_download_url(cls, url: str) -> str:
+        file_id = cls._google_drive_file_id(url)
+        if not file_id:
+            return url
+        return f"https://drive.google.com/uc?{urlencode({'export': 'download', 'id': file_id})}"
+
+    @staticmethod
+    def _google_drive_confirm_token(response: requests.Response) -> str:
+        for key, value in response.cookies.items():
+            if key.startswith("download_warning") and value:
+                return value
+        match = re.search(r"confirm=([0-9A-Za-z_-]+)", response.text or "")
+        return match.group(1) if match else ""
+
+    @staticmethod
+    def _looks_like_pdf_response(response: requests.Response, original_url: str) -> bool:
+        content_type = response.headers.get("Content-Type", "").lower()
+        content_disposition = response.headers.get("Content-Disposition", "").lower()
+        if "pdf" in content_type or ".pdf" in content_disposition:
+            return True
+        if MediaOrchestrator._google_drive_file_id(original_url):
+            return False
+        return is_direct_document_url(original_url)
 
     def _download_pdf_document(self, url: str, output_path: Path, referer: str | None = None) -> None:
         headers = {"User-Agent": self.config.scraping.user_agent}
@@ -597,19 +639,42 @@ class MediaOrchestrator:
             headers["Referer"] = referer
         output_path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            with requests.get(url, timeout=self.config.scraping.request_timeout_seconds, headers=headers, stream=True) as response:
+            session = requests.Session()
+            download_url = self._normalize_document_download_url(url)
+            with session.get(download_url, timeout=self.config.scraping.request_timeout_seconds, headers=headers, stream=True) as response:
                 response.raise_for_status()
-                content_type = response.headers.get("Content-Type", "").lower()
-                if "pdf" not in content_type and not is_direct_document_url(url):
+                final_response = response
+                if self._google_drive_file_id(url) and not self._looks_like_pdf_response(response, url):
+                    token = self._google_drive_confirm_token(response)
+                    if token:
+                        drive_url = urlparse(download_url)
+                        query = parse_qs(drive_url.query)
+                        query["confirm"] = [token]
+                        confirmed_url = urlunparse(
+                            drive_url._replace(
+                                query=urlencode({key: values[-1] for key, values in query.items()})
+                            )
+                        )
+                        final_response = session.get(
+                            confirmed_url,
+                            timeout=self.config.scraping.request_timeout_seconds,
+                            headers=headers,
+                            stream=True,
+                        )
+                        final_response.raise_for_status()
+                if not self._looks_like_pdf_response(final_response, url):
+                    content_type = final_response.headers.get("Content-Type", "").lower()
                     raise TaskFailure(
                         f"URL did not return a PDF document: Content-Type={content_type or 'unknown'}",
                         stage="download",
                         retry_suggestion="Check that the link points directly to a PDF file.",
                     )
                 with output_path.open("wb") as fh:
-                    for chunk in response.iter_content(chunk_size=1024 * 256):
+                    for chunk in final_response.iter_content(chunk_size=1024 * 256):
                         if chunk:
                             fh.write(chunk)
+                if final_response is not response:
+                    final_response.close()
         except TaskFailure:
             raise
         except Exception as exc:  # noqa: BLE001

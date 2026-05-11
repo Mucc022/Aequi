@@ -97,7 +97,14 @@ def is_probably_video_url(url: str, page_host: str) -> bool:
 
 def is_probably_document_url(url: str) -> bool:
     parsed = urlparse(url)
+    host = parsed.netloc.lower()
     path = parsed.path.lower()
+    if "drive.google.com" in host:
+        parts = [part for part in path.split("/") if part]
+        if len(parts) >= 3 and parts[0] == "file" and parts[1] == "d":
+            return True
+        if path.endswith("/uc") and "id=" in parsed.query.lower():
+            return True
     return any(path.endswith(ext) for ext in DOCUMENT_EXTENSIONS)
 
 

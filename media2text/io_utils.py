@@ -27,7 +27,16 @@ def is_direct_media_url(value: str) -> bool:
 def is_direct_document_url(value: str) -> bool:
     if not is_url(value):
         return False
-    path = urlparse(value.strip()).path.lower()
+    parsed = urlparse(value.strip())
+    host = parsed.netloc.lower()
+    path = parsed.path.lower()
+    if "drive.google.com" in host:
+        parts = [part for part in path.split("/") if part]
+        query = parsed.query.lower()
+        if len(parts) >= 3 and parts[0] == "file" and parts[1] == "d":
+            return True
+        if path.endswith("/uc") and "id=" in query:
+            return True
     return any(path.endswith(ext) for ext in DOCUMENT_EXTENSIONS)
 
 

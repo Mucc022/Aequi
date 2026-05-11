@@ -93,6 +93,8 @@ CLI 入口由 `media_tool.py` 提供。
 .\.venv\Scripts\python.exe media_tool.py run --input "https://example.com/paper.pdf" --out "outputs" --subtitle-priority skip_text --text-output none --no-export-audio
 ```
 
+Google Drive PDF 分享链接也可以直接输入。程序会自动把 `drive.google.com/file/d/<id>/...` 转成下载地址；如果文件不是公开分享，仍需要先开放权限或后续补充 Cookie 登录能力。
+
 处理网页链接：
 
 ```powershell

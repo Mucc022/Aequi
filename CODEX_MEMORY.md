@@ -90,3 +90,4 @@ The next likely work is product optimization. Good starting areas:
 - Local files now create local `CandidateItem` rows with `source_kind="local"`, an empty `source_url`, title from the file stem, source text `本地文件`, and status `未处理`.
 - CLI help description was renamed from `Unified Media2Text tool` to `Aequora media organizer`.
 - 2026-05-11: Added first-step multimodal PDF support. Local PDFs and direct PDF URLs are saved to the result directory as `artifacts.document` with `content_type=document/pdf`; page scanning also discovers `.pdf` links. PDF tasks do not run Whisper, subtitle download, or audio export.
+- 2026-05-11: Google Drive PDF share links are normalized from `drive.google.com/file/d/<id>/...` or `uc?id=<id>` to `uc?export=download&id=<id>`, with support for Drive confirmation tokens before saving the PDF.
