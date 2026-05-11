@@ -101,9 +101,13 @@ def is_probably_document_url(url: str) -> bool:
     path = parsed.path.lower()
     if "drive.google.com" in host:
         parts = [part for part in path.split("/") if part]
+        query = parsed.query.lower()
         if len(parts) >= 3 and parts[0] == "file" and parts[1] == "d":
-            return True
-        if path.endswith("/uc") and "id=" in parsed.query.lower():
+            if len(parts) == 3:
+                return True
+            tail = parts[3].lower()
+            return tail in {"view", "preview"} or tail.endswith(".pdf")
+        if path.endswith("/uc") and "id=" in query:
             return True
     return any(path.endswith(ext) for ext in DOCUMENT_EXTENSIONS)
 
@@ -273,7 +277,7 @@ def discover_targets(
     all_targets: set[str] = set()
 
     for page in pages:
-        if urlparse(page).path.lower().endswith(VIDEO_EXTENSIONS + DOCUMENT_EXTENSIONS):
+        if urlparse(page).path.lower().endswith(VIDEO_EXTENSIONS + DOCUMENT_EXTENSIONS) or is_probably_document_url(page):
             logger.info("检测到直接资源链接，跳过网页扫描: %s", page)
             all_targets.add(page)
             continue

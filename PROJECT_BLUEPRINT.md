@@ -72,6 +72,7 @@ Aequora 是一个 Windows-first 的本地学习资料整理工具：用户丢进
 | AQR-005 | Done | 新任务选择本地视频后，候选页显示上一次网页任务里的旧候选 | 每次解析前清空旧候选；本地文件生成本地候选；迟到的旧网页扫描结果不能污染当前任务 | 已修复 `gui_fluent.py` 候选状态清理、扫描 token、本地候选创建，并验证通过 |
 | AQR-006 | Done | 想要多模态下载工具，支持下载 PDF | PDF 本地文件、PDF 直链、网页内 PDF 链接能进入候选并归档到结果目录，不走 Whisper/音频处理 | 已新增 PDF 文档分支、GUI 候选显示和结果展示，并完成本地/URL/CLI 验证 |
 | AQR-007 | Done | Google Drive PDF 分享链接下载失败 404，需要自动适配 | `drive.google.com/file/d/<id>/...` 能自动转换为 Drive 下载地址，并处理确认 token | 已新增 Google Drive PDF URL 规范化和确认页下载处理 |
+| AQR-008 | Done | Google Drive PDF `/view` 链接被扫成 11 个假候选，且下载返回 HTML | Drive 文档分享页应作为一个直接文档候选；遇到 Drive HTML 错误页时给出权限/登录提示 | 已修复 Drive 候选识别和直接资源跳过逻辑，并把 Drive “无法下载文件”页面解释为权限/匿名下载限制 |
 
 ## 体验优化候选
 
@@ -114,6 +115,10 @@ Aequora 是一个 Windows-first 的本地学习资料整理工具：用户丢进
 - 验证：`compileall`、本地 PDF orchestrator smoke、URL PDF smoke、GUI PDF 候选 smoke、CLI PDF smoke 均通过；临时验证产物已清理。
 - 修复 Google Drive PDF 分享链接下载：识别 `drive.google.com/file/d/<id>/...` 和 `uc?id=<id>`，自动转换为 `uc?export=download&id=<id>`，并处理 Google Drive 的下载确认 token。
 - 验证：`compileall`、Drive URL 解析/候选发现测试、Google Drive 确认页 mock 下载测试均通过。
+- 修复 Google Drive `/file/d/<id>/view` 被当网页扫描的问题：扫描入口现在把 Drive 分享页视为直接文档资源，避免从 Google 预览 HTML 中产生 `Google Docs`、`IE=edge`、`article` 等假 PDF 候选。
+- 收紧 Drive 候选判断：只接受 `/file/d/<id>`、`/view`、`/preview`、`.pdf` 文件名尾部和 `/uc?id=...`，避免任意相对字符串污染候选列表。
+- 下载阶段如果 Google Drive 返回 `Google Drive - Can't download file` HTML 页面，现在会明确提示文件可能未公开、需要登录或被 Drive 阻止匿名下载，而不是只显示 `Content-Type=text/html`。
+- 验证：`compileall`、Drive discovery 单元式检查、实际 Drive `uc?export=download` 响应检查、CLI 失败路径 smoke 均完成；临时验证产物已清理。
 
 ## 每次任务结束检查表
 

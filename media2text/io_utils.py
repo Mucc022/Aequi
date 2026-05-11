@@ -34,7 +34,10 @@ def is_direct_document_url(value: str) -> bool:
         parts = [part for part in path.split("/") if part]
         query = parsed.query.lower()
         if len(parts) >= 3 and parts[0] == "file" and parts[1] == "d":
-            return True
+            if len(parts) == 3:
+                return True
+            tail = parts[3].lower()
+            return tail in {"view", "preview"} or tail.endswith(".pdf")
         if path.endswith("/uc") and "id=" in query:
             return True
     return any(path.endswith(ext) for ext in DOCUMENT_EXTENSIONS)

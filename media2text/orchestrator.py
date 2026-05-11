@@ -633,6 +633,18 @@ class MediaOrchestrator:
             return False
         return is_direct_document_url(original_url)
 
+    @staticmethod
+    def _google_drive_html_failure(response: requests.Response) -> str:
+        content_type = response.headers.get("Content-Type", "").lower()
+        if "html" not in content_type:
+            return ""
+        text = (response.text or "").lower()
+        if "google drive" not in text:
+            return ""
+        if "can't download file" in text or "can&#39;t download file" in text or "cannot download" in text:
+            return "Google Drive 返回了“无法下载文件”页面，而不是 PDF 文件。文件可能未公开分享、需要登录，或被 Google Drive 阻止匿名下载。"
+        return "Google Drive 返回了 HTML 预览/错误页面，而不是 PDF 文件。文件可能需要开放权限或登录后才能下载。"
+
     def _download_pdf_document(self, url: str, output_path: Path, referer: str | None = None) -> None:
         headers = {"User-Agent": self.config.scraping.user_agent}
         if referer:
@@ -664,6 +676,13 @@ class MediaOrchestrator:
                         final_response.raise_for_status()
                 if not self._looks_like_pdf_response(final_response, url):
                     content_type = final_response.headers.get("Content-Type", "").lower()
+                    drive_failure = self._google_drive_html_failure(final_response) if self._google_drive_file_id(url) else ""
+                    if drive_failure:
+                        raise TaskFailure(
+                            drive_failure,
+                            stage="download",
+                            retry_suggestion="请确认 Google Drive 文件已设为“知道链接的任何人可查看”，或后续启用 Cookie/浏览器登录下载能力。",
+                        )
                     raise TaskFailure(
                         f"URL did not return a PDF document: Content-Type={content_type or 'unknown'}",
                         stage="download",
