@@ -5,7 +5,7 @@ import sys
 import threading
 import uuid
 import re
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from enum import Enum
 from pathlib import Path
 from urllib.parse import unquote, urlparse
@@ -51,6 +51,8 @@ from PySide6.QtWidgets import (
     QSplitter,
     QStackedWidget,
     QTabWidget,
+    QTableWidget,
+    QTableWidgetItem,
     QTableView,
     QTextEdit,
     QToolButton,
@@ -191,6 +193,7 @@ class NewTaskPage(QWidget):
         layout.setContentsMargins(18, 18, 18, 18)
         layout.setSpacing(12)
         layout.addWidget(window._build_input_card())
+        layout.addWidget(window._build_link_crawl_card())
         layout.addStretch(1)
 
 
@@ -253,6 +256,7 @@ class SettingsPage(QWidget):
 class FluentMedia2TextWindow(QMainWindow):
     candidate_scan_finished = Signal(object)
     candidate_meta_ready = Signal(str, str, str, object)
+    link_crawl_finished = Signal(object)
 
     def __init__(self) -> None:
         super().__init__()
@@ -336,6 +340,21 @@ class FluentMedia2TextWindow(QMainWindow):
         self.task_quality_combo: QComboBox | None = None
         self.task_prefer_compatible_chk: QCheckBox | None = None
         self.task_allow_separate_chk: QCheckBox | None = None
+        self.link_crawl_url_edit: QLineEdit | None = None
+        self.link_crawl_out_edit: QLineEdit | None = None
+        self.link_crawl_depth_edit: QLineEdit | None = None
+        self.link_crawl_max_pages_edit: QLineEdit | None = None
+        self.link_crawl_external_chk: QCheckBox | None = None
+        self.link_crawl_video_chk: QCheckBox | None = None
+        self.link_crawl_status_label: QLabel | None = None
+        self.link_crawl_btn: QPushButton | None = None
+        self.link_crawl_open_btn: QPushButton | None = None
+        self.link_crawl_copy_btn: QPushButton | None = None
+        self.link_crawl_select_all_btn: QPushButton | None = None
+        self.link_crawl_select_video_btn: QPushButton | None = None
+        self.link_crawl_clear_btn: QPushButton | None = None
+        self.link_crawl_table: QTableWidget | None = None
+        self.link_crawl_output_dir: Path | None = None
 
         self.out_edit = QLineEdit("outputs")
         self.config_edit = QLineEdit("config.json")
@@ -530,6 +549,87 @@ class FluentMedia2TextWindow(QMainWindow):
         hint.setObjectName("HintLabel")
         row.addWidget(hint, 1)
         layout.addLayout(row)
+        return card
+
+    def _build_link_crawl_card(self) -> QWidget:
+        card = QGroupBox("链接地图：从母链接爬取并分类")
+        root = QVBoxLayout(card)
+        root.setSpacing(10)
+
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(10)
+        grid.setVerticalSpacing(8)
+
+        self.link_crawl_url_edit = QLineEdit()
+        self.link_crawl_url_edit.setPlaceholderText("粘贴母链接，例如 https://example.com/page")
+        grid.addWidget(QLabel("母链接"), 0, 0)
+        grid.addWidget(self.link_crawl_url_edit, 0, 1, 1, 5)
+
+        self.link_crawl_out_edit = QLineEdit("outputs/link_crawl")
+        out_btn = QPushButton("选择")
+        out_btn.clicked.connect(self._choose_link_crawl_output)
+        grid.addWidget(QLabel("输出目录"), 1, 0)
+        grid.addWidget(self.link_crawl_out_edit, 1, 1, 1, 4)
+        grid.addWidget(out_btn, 1, 5)
+
+        self.link_crawl_depth_edit = QLineEdit("1")
+        self.link_crawl_max_pages_edit = QLineEdit("100")
+        self.link_crawl_depth_edit.setFixedWidth(64)
+        self.link_crawl_max_pages_edit.setFixedWidth(84)
+        self.link_crawl_external_chk = QCheckBox("继续爬外站页面")
+        self.link_crawl_video_chk = QCheckBox("深挖隐藏视频")
+        self.link_crawl_video_chk.setChecked(True)
+        grid.addWidget(QLabel("深度"), 2, 0)
+        grid.addWidget(self.link_crawl_depth_edit, 2, 1)
+        grid.addWidget(QLabel("最多页面"), 2, 2)
+        grid.addWidget(self.link_crawl_max_pages_edit, 2, 3)
+        grid.addWidget(self.link_crawl_external_chk, 2, 4)
+        grid.addWidget(self.link_crawl_video_chk, 2, 5)
+        root.addLayout(grid)
+
+        action_row = QHBoxLayout()
+        self.link_crawl_status_label = QLabel("输出 links.json、links.csv 和 links_by_category.txt。")
+        self.link_crawl_status_label.setObjectName("HintLabel")
+        self.link_crawl_status_label.setWordWrap(True)
+        self.link_crawl_btn = QPushButton("开始爬取链接")
+        self.link_crawl_open_btn = QPushButton("打开结果目录")
+        self.link_crawl_open_btn.setEnabled(False)
+        self.link_crawl_btn.clicked.connect(self._run_link_crawl)
+        self.link_crawl_open_btn.clicked.connect(self._open_link_crawl_output)
+        action_row.addWidget(self.link_crawl_status_label, 1)
+        action_row.addWidget(self.link_crawl_btn)
+        action_row.addWidget(self.link_crawl_open_btn)
+        root.addLayout(action_row)
+
+        table_actions = QHBoxLayout()
+        self.link_crawl_select_all_btn = QPushButton("全选")
+        self.link_crawl_select_video_btn = QPushButton("全选课程/视频")
+        self.link_crawl_clear_btn = QPushButton("清空选择")
+        self.link_crawl_copy_btn = QPushButton("复制已选链接")
+        self.link_crawl_select_all_btn.clicked.connect(lambda: self._set_link_crawl_table_checks(True))
+        self.link_crawl_select_video_btn.clicked.connect(lambda: self._set_link_crawl_table_checks(True, {"course", "video"}))
+        self.link_crawl_clear_btn.clicked.connect(lambda: self._set_link_crawl_table_checks(False))
+        self.link_crawl_copy_btn.clicked.connect(self._copy_checked_link_crawl_urls)
+        table_actions.addWidget(self.link_crawl_select_all_btn)
+        table_actions.addWidget(self.link_crawl_select_video_btn)
+        table_actions.addWidget(self.link_crawl_clear_btn)
+        table_actions.addStretch(1)
+        table_actions.addWidget(self.link_crawl_copy_btn)
+        root.addLayout(table_actions)
+
+        self.link_crawl_table = QTableWidget(0, 4)
+        self.link_crawl_table.setHorizontalHeaderLabels(["选择", "分类", "课程 / 内容", "链接"])
+        self.link_crawl_table.setMinimumHeight(220)
+        self.link_crawl_table.setEditTriggers(QTableView.NoEditTriggers)
+        self.link_crawl_table.setSelectionBehavior(QTableView.SelectRows)
+        self.link_crawl_table.setSelectionMode(QTableView.SingleSelection)
+        self.link_crawl_table.verticalHeader().setVisible(False)
+        table_header = self.link_crawl_table.horizontalHeader()
+        table_header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        table_header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        table_header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        table_header.setSectionResizeMode(3, QHeaderView.Stretch)
+        root.addWidget(self.link_crawl_table)
         return card
 
     def _build_settings_card(self) -> QWidget:
@@ -1169,10 +1269,18 @@ class FluentMedia2TextWindow(QMainWindow):
                 alternate-background-color: {theme["alternate"]};
                 selection-background-color: {theme["active"]};
             }}
+            QTableWidget {{
+                gridline-color: {theme["soft_border"]};
+                alternate-background-color: {theme["alternate"]};
+                selection-background-color: {theme["active"]};
+            }}
             QTableView::item {{
                 padding: 8px;
             }}
-            QTextEdit, QPlainTextEdit, QLineEdit, QComboBox, QTableView {{
+            QTableWidget::item {{
+                padding: 8px;
+            }}
+            QTextEdit, QPlainTextEdit, QLineEdit, QComboBox, QTableView, QTableWidget {{
                 background: {theme["field"]};
                 color: {theme["text"]};
                 border: 1px solid {theme["border"]};
@@ -1218,6 +1326,7 @@ class FluentMedia2TextWindow(QMainWindow):
     def _bind_signals(self) -> None:
         self.candidate_scan_finished.connect(self._on_candidate_scan_finished)
         self.candidate_meta_ready.connect(self._apply_candidate_meta)
+        self.link_crawl_finished.connect(self._on_link_crawl_finished)
         if self.candidate_table is not None:
             self.candidate_table.selectionModel().selectionChanged.connect(self._on_candidate_selected)
             self.candidate_table.clicked.connect(self._on_candidate_clicked)
@@ -1509,6 +1618,205 @@ class FluentMedia2TextWindow(QMainWindow):
             return default
         return value
 
+    def _run_link_crawl(self) -> None:
+        if not self.link_crawl_url_edit or not self.link_crawl_out_edit:
+            return
+
+        root_url = self.link_crawl_url_edit.text().strip()
+        if not is_url(root_url):
+            QMessageBox.warning(self, "提示", "请先输入一个 http 或 https 开头的母链接。")
+            return
+
+        out_raw = self.link_crawl_out_edit.text().strip() or "outputs/link_crawl"
+        output_dir = Path(out_raw).expanduser()
+        if not output_dir.is_absolute():
+            output_dir = (Path.cwd() / output_dir).resolve()
+
+        depth = self._safe_int(self.link_crawl_depth_edit.text() if self.link_crawl_depth_edit else "1", 1, 0)
+        max_pages = self._safe_int(
+            self.link_crawl_max_pages_edit.text() if self.link_crawl_max_pages_edit else "100",
+            100,
+            1,
+        )
+        include_external = bool(self.link_crawl_external_chk and self.link_crawl_external_chk.isChecked())
+        discover_video = bool(self.link_crawl_video_chk and self.link_crawl_video_chk.isChecked())
+
+        self.link_crawl_output_dir = output_dir
+        if self.link_crawl_status_label:
+            self.link_crawl_status_label.setText("正在爬取链接，请稍等...")
+        if self.link_crawl_open_btn:
+            self.link_crawl_open_btn.setEnabled(False)
+        self._populate_link_crawl_table([])
+        self._set_scan_state(True)
+
+        def worker() -> None:
+            try:
+                from crawl_links import crawl_links, write_outputs
+
+                records = crawl_links(
+                    root_url=root_url,
+                    max_depth=depth,
+                    max_pages=max_pages,
+                    timeout=self._safe_int(self.timeout_edit.text(), 20, 1),
+                    delay=0.2,
+                    include_external_pages=include_external,
+                    discover_video_candidates=discover_video,
+                )
+                write_outputs(records, output_dir)
+                counts: dict[str, int] = {}
+                for record in records:
+                    counts[record.category] = counts.get(record.category, 0) + 1
+                self.link_crawl_finished.emit(
+                    {
+                        "ok": True,
+                        "records": len(records),
+                        "rows": [asdict(record) for record in records],
+                        "counts": counts,
+                        "output_dir": str(output_dir),
+                    }
+                )
+            except Exception as exc:  # noqa: BLE001
+                self.link_crawl_finished.emit({"ok": False, "error": str(exc), "output_dir": str(output_dir)})
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_link_crawl_finished(self, payload: object) -> None:
+        self._set_scan_state(False)
+        data = payload if isinstance(payload, dict) else {}
+        output_dir = Path(str(data.get("output_dir") or self.link_crawl_output_dir or "outputs/link_crawl"))
+        self.link_crawl_output_dir = output_dir
+
+        if not data.get("ok"):
+            message = f"链接爬取失败：{data.get('error') or '未知错误'}"
+            if self.link_crawl_status_label:
+                self.link_crawl_status_label.setText(message)
+            QMessageBox.warning(self, "链接爬取失败", message)
+            return
+
+        counts = data.get("counts") if isinstance(data.get("counts"), dict) else {}
+        summary_parts = [f"{key} {counts[key]}" for key in sorted(counts)]
+        summary = "，".join(summary_parts)
+        message = f"完成：共 {data.get('records', 0)} 条链接。{summary}"
+        rows = data.get("rows") if isinstance(data.get("rows"), list) else []
+        self._populate_link_crawl_table(rows)
+        if self.link_crawl_status_label:
+            self.link_crawl_status_label.setText(message)
+        if self.link_crawl_open_btn:
+            self.link_crawl_open_btn.setEnabled(True)
+        if self.result_text:
+            self.result_text.setPlainText(
+                "\n".join(
+                    [
+                        "链接爬取完成",
+                        "",
+                        message,
+                        "",
+                        f"输出目录：{output_dir}",
+                        f"- {output_dir / 'links_by_category.txt'}",
+                        f"- {output_dir / 'links.csv'}",
+                        f"- {output_dir / 'links.json'}",
+                    ]
+                )
+            )
+
+    def _display_link_crawl_rows(self, rows: list[object]) -> list[dict]:
+        typed_rows = [row for row in rows if isinstance(row, dict)]
+        course_rows = [row for row in typed_rows if str(row.get("category") or "") == "course"]
+        if course_rows:
+            return course_rows
+        preferred = [
+            row
+            for row in typed_rows
+            if str(row.get("category") or "") in {"course", "video", "audio", "document"}
+        ]
+        if preferred:
+            return preferred
+        visible_pages = [
+            row
+            for row in typed_rows
+            if str(row.get("category") or "").startswith("page_") and str(row.get("text") or "").strip()
+        ]
+        return visible_pages or typed_rows
+
+    def _populate_link_crawl_table(self, rows: list[object]) -> None:
+        if not self.link_crawl_table:
+            return
+        self.link_crawl_table.setRowCount(0)
+        for row_data in self._display_link_crawl_rows(rows):
+            row = self.link_crawl_table.rowCount()
+            self.link_crawl_table.insertRow(row)
+
+            category = str(row_data.get("category") or "")
+            text = str(row_data.get("text") or row_data.get("source_title") or "")
+            url = str(row_data.get("url") or "")
+
+            check_item = QTableWidgetItem("")
+            check_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsUserCheckable | Qt.ItemIsSelectable)
+            check_item.setCheckState(Qt.Checked if category in {"course", "video"} else Qt.Unchecked)
+            check_item.setData(Qt.UserRole, url)
+            self.link_crawl_table.setItem(row, 0, check_item)
+
+            category_item = QTableWidgetItem(category)
+            category_item.setData(Qt.UserRole, url)
+            self.link_crawl_table.setItem(row, 1, category_item)
+
+            text_item = QTableWidgetItem(self._short_display(text, max_len=80))
+            text_item.setToolTip(text)
+            text_item.setData(Qt.UserRole, url)
+            self.link_crawl_table.setItem(row, 2, text_item)
+
+            url_item = QTableWidgetItem(url)
+            url_item.setToolTip(url)
+            url_item.setData(Qt.UserRole, url)
+            self.link_crawl_table.setItem(row, 3, url_item)
+
+        if self.link_crawl_table.rowCount() > 0:
+            self.link_crawl_table.resizeRowsToContents()
+
+    def _set_link_crawl_table_checks(self, checked: bool, category: str | set[str] | None = None) -> None:
+        if not self.link_crawl_table:
+            return
+        state = Qt.Checked if checked else Qt.Unchecked
+        categories = {category} if isinstance(category, str) else category
+        for row in range(self.link_crawl_table.rowCount()):
+            category_item = self.link_crawl_table.item(row, 1)
+            if categories and (not category_item or category_item.text() not in categories):
+                continue
+            check_item = self.link_crawl_table.item(row, 0)
+            if check_item:
+                check_item.setCheckState(state)
+
+    def _copy_checked_link_crawl_urls(self) -> None:
+        if not self.link_crawl_table:
+            return
+        urls: list[str] = []
+        seen: set[str] = set()
+        for row in range(self.link_crawl_table.rowCount()):
+            check_item = self.link_crawl_table.item(row, 0)
+            if not check_item or check_item.checkState() != Qt.Checked:
+                continue
+            url = str(check_item.data(Qt.UserRole) or "").strip()
+            if not url or url in seen:
+                continue
+            seen.add(url)
+            urls.append(url)
+        if not urls:
+            QMessageBox.information(self, "复制链接", "还没有勾选任何链接。")
+            return
+        QApplication.clipboard().setText("\n".join(urls))
+        if self.link_crawl_status_label:
+            self.link_crawl_status_label.setText(f"已复制 {len(urls)} 条链接到剪贴板。")
+
+    def _open_link_crawl_output(self) -> None:
+        output_dir = self.link_crawl_output_dir
+        if not output_dir and self.link_crawl_out_edit:
+            output_dir = Path(self.link_crawl_out_edit.text().strip() or "outputs/link_crawl").expanduser()
+            if not output_dir.is_absolute():
+                output_dir = (Path.cwd() / output_dir).resolve()
+        if output_dir:
+            output_dir.mkdir(parents=True, exist_ok=True)
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(output_dir)))
+
     def _on_advanced_toggled(self, checked: bool) -> None:
         if self.advanced_content:
             self.advanced_content.setVisible(bool(checked))
@@ -1589,6 +1897,18 @@ class FluentMedia2TextWindow(QMainWindow):
             self.back_btn.setEnabled(self.current_step == UiStep.SELECTING and not running and self._candidate_mode_active)
         if self.candidate_table:
             self.candidate_table.setEnabled(self.current_step == UiStep.SELECTING and not running)
+        if self.link_crawl_btn:
+            self.link_crawl_btn.setEnabled(self.current_step == UiStep.INPUT and not running and not self._scan_in_progress)
+        if self.link_crawl_open_btn:
+            self.link_crawl_open_btn.setEnabled(bool(self.link_crawl_output_dir) and not running and not self._scan_in_progress)
+        for button in (
+            self.link_crawl_copy_btn,
+            self.link_crawl_select_all_btn,
+            self.link_crawl_select_video_btn,
+            self.link_crawl_clear_btn,
+        ):
+            if button:
+                button.setEnabled(self.current_step == UiStep.INPUT and not running and not self._scan_in_progress)
 
     def _set_scan_state(self, scanning: bool) -> None:
         self._scan_in_progress = scanning
@@ -1631,6 +1951,11 @@ class FluentMedia2TextWindow(QMainWindow):
         path = QFileDialog.getExistingDirectory(self, "选择本次任务输出目录")
         if path and self.task_out_edit:
             self.task_out_edit.setText(path)
+
+    def _choose_link_crawl_output(self) -> None:
+        path = QFileDialog.getExistingDirectory(self, "选择链接爬取输出目录")
+        if path and self.link_crawl_out_edit:
+            self.link_crawl_out_edit.setText(path)
 
     def _choose_config(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "选择配置文件", "", "JSON (*.json);;所有文件 (*.*)")

@@ -108,6 +108,42 @@ CLI 入口由 `media_tool.py` 提供。
 .\.venv\Scripts\python.exe media_tool.py snapshot-capture --video "C:\Videos\demo.mp4" --ai-output "C:\Videos\demo_ai_output.txt"
 ```
 
+## 爬取并分类网页链接
+
+如果想从一个母链接开始，把页面上的链接自动抓出来并按类型分类：
+
+GUI 入口：
+
+```text
+新建任务 -> 链接地图：从母链接爬取并分类
+```
+
+在“母链接”里粘贴网页地址，确认输出目录、深度和最多页面数，然后点击“开始爬取链接”。完成后点击“打开结果目录”。
+结果会直接显示在界面表格里，左侧可勾选链接；`video` 类链接会默认勾选。点击“复制已选链接”即可把选中的 URL 复制到剪贴板。
+遇到 Four Seas / Wix 这类课程目录页时，界面会优先显示课程日期条目，例如 `2026-04-14 创世记`，而不是底层脚本和图片资源。
+
+CLI 入口：
+
+```powershell
+.\.venv\Scripts\python.exe crawl_links.py "https://example.com/page" --out "outputs\link_crawl"
+```
+
+默认会在同一个网站内向下爬 2 层，并额外调用 Aequora 的深层视频候选发现逻辑。输出文件：
+
+```text
+outputs\link_crawl\
+├─ links.json
+├─ links.csv
+└─ links_by_category.txt
+```
+
+常用参数：
+
+- `--max-depth 0`：只抓当前页面。
+- `--max-pages 50`：最多抓 50 个页面。
+- `--include-external-pages`：外站页面也继续爬。
+- `--no-video-candidates`：关闭深层视频候选发现，只抓页面明面上的链接。
+
 ## 配置
 
 默认配置文件是：
