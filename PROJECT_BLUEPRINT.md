@@ -69,6 +69,8 @@ Aequora 是一个 Windows-first 的本地学习资料整理工具：用户丢进
 | AQR-002 | Done | 新 Codex 窗口要能快速读懂项目 | 仓库里有 Codex 交接文件 | 已完成，新增 `AGENTS.md` |
 | AQR-003 | Done | 需要项目总地图和规则，每次任务前后都检查更新 | 有一个活文档记录蓝图、任务和日志 | 本次新增 `PROJECT_BLUEPRINT.md` |
 | AQR-004 | Ready | 需要继续优化产品体验 | 先从启动、界面可懂性、结果可找到、失败可恢复这些方向挑下一个具体任务 | 等用户指定下一步或 Codex 根据现状建议 |
+| AQR-005 | Done | 帮我安装一下环境，启用这个项目 | 本机安装 Python、项目虚拟环境、依赖和 FFmpeg；双击启动优先使用项目 `.venv` | 已完成，烟测通过 |
+| AQR-006 | Done | 网页上明明有多个视频，但候选没有发现记录/只发现无关链接；想要深度挖掘 | Wix 页面能进入 Thunderbolt JSON 深层数据，抓到真实播放器 mp4，不把页脚社交链接当视频 | 已修复并用 Four Seas 页面验证发现 4 条真实视频 |
 
 ## 体验优化候选
 
@@ -93,6 +95,16 @@ Aequora 是一个 Windows-first 的本地学习资料整理工具：用户丢进
 - 新增 `AGENTS.md`，作为未来 Codex 会话的项目交接文件。
 - 新增 `PROJECT_BLUEPRINT.md`，作为项目总地图、任务池和日志。
 - 新增 `CODEX_MEMORY.md`，作为可上传/复用的 Codex 项目记忆草稿。
+
+### 2026-05-29
+
+- 安装 Python 3.12.10，并在项目内创建 `.venv`。
+- 安装 `requirements.txt` 里的 GUI、下载、Whisper 和打包依赖。
+- 通过 WinGet 安装 FFmpeg 8.1.1，并修复用户 PATH，加入 Python 与 FFmpeg 路径。
+- 更新 `start.bat`，优先使用 `.venv\Scripts\pythonw.exe` 启动 GUI。
+- 验证通过：`compileall`、`media_tool.py --help`、FFmpeg 版本检查、跳过 Whisper 的本地音频导出烟测。
+- 修复 Wix Thunderbolt 深层候选扫描：避免 `&registry...` 被 HTML 实体误读成 `®istry...` 导致 JSON 请求 400，并优先读取 Wix `VideoPlayer` 的真实 `src`。
+- 用 `https://www.fourseas-chinese.org/2026-04-26-希伯来历史` 验证，候选发现从误抓页脚 YouTube 改为识别 4 条 `video.wixstatic.com` mp4。
 
 ## 每次任务结束检查表
 
