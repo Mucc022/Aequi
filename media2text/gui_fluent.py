@@ -8,7 +8,7 @@ import re
 from dataclasses import asdict, dataclass
 from enum import Enum
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import quote, unquote, urlparse, urlunparse
 
 try:
     import requests
@@ -329,6 +329,7 @@ class FluentMedia2TextWindow(QMainWindow):
         self.task_export_audio_chk: QCheckBox | None = None
         self.task_download_subtitle_chk: QCheckBox | None = None
         self.task_export_text_chk: QCheckBox | None = None
+        self.task_result_index_chk: QCheckBox | None = None
         self.task_strategy_hint: QLabel | None = None
         self.task_media_retention_combo: QComboBox | None = None
         self.task_audio_format_combo: QComboBox | None = None
@@ -955,6 +956,8 @@ class FluentMedia2TextWindow(QMainWindow):
         self.task_save_thumbnail_chk = QCheckBox("保存封面")
         self.task_save_metadata_chk = QCheckBox("保存来源信息（标题、链接、时长等）")
         self.task_save_metadata_chk.setToolTip("保存这条资料的标题、原始链接、平台信息和处理记录，方便以后追溯来源。")
+        self.task_result_index_chk = QCheckBox("文件名前加序号")
+        self.task_result_index_chk.setToolTip("默认关闭。勾选后，结果文件名会加上 001、002 这种顺序编号，方便按处理批次排序。")
         self.task_export_audio_chk = QCheckBox("导出音频")
         self.task_download_subtitle_chk = QCheckBox("下载字幕")
         self.task_export_text_chk = QCheckBox("导出文本")
@@ -1037,8 +1040,9 @@ class FluentMedia2TextWindow(QMainWindow):
         media_layout = QGridLayout(media_group)
         media_layout.addWidget(self.task_save_thumbnail_chk, 0, 0)
         media_layout.addWidget(self.task_save_metadata_chk, 0, 1)
-        media_layout.addWidget(self._label_with_help("媒体保留策略", "决定处理中间文件怎么处理：只留最终结果、临时缓存后删除，或完整保留视频和结果。"), 1, 0)
-        media_layout.addWidget(self.task_media_retention_combo, 1, 1)
+        media_layout.addWidget(self.task_result_index_chk, 1, 0, 1, 2)
+        media_layout.addWidget(self._label_with_help("媒体保留策略", "决定处理中间文件怎么处理：只留最终结果、临时缓存后删除，或完整保留视频和结果。"), 2, 0)
+        media_layout.addWidget(self.task_media_retention_combo, 2, 1)
         advanced_layout.addWidget(media_group)
 
         format_group = QGroupBox("格式")
@@ -1738,6 +1742,20 @@ class FluentMedia2TextWindow(QMainWindow):
         ]
         return visible_pages or typed_rows
 
+    def _copyable_url(self, url: str) -> str:
+        parsed = urlparse(url.strip())
+        if parsed.scheme not in {"http", "https"}:
+            return url.strip()
+        path = quote(unquote(parsed.path), safe="/%:@")
+        query = quote(unquote(parsed.query), safe="=&?/:@%+,$;")
+        return urlunparse(parsed._replace(path=path, query=query))
+
+    def _display_url(self, url: str) -> str:
+        parsed = urlparse(url.strip())
+        if parsed.scheme not in {"http", "https"}:
+            return url.strip()
+        return urlunparse(parsed._replace(path=unquote(parsed.path), query=unquote(parsed.query)))
+
     def _populate_link_crawl_table(self, rows: list[object]) -> None:
         if not self.link_crawl_table:
             return
@@ -1749,25 +1767,27 @@ class FluentMedia2TextWindow(QMainWindow):
             category = str(row_data.get("category") or "")
             text = str(row_data.get("text") or row_data.get("source_title") or "")
             url = str(row_data.get("url") or "")
+            copy_url = self._copyable_url(url)
+            display_url = self._display_url(url)
 
             check_item = QTableWidgetItem("")
             check_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsUserCheckable | Qt.ItemIsSelectable)
             check_item.setCheckState(Qt.Checked if category in {"course", "video"} else Qt.Unchecked)
-            check_item.setData(Qt.UserRole, url)
+            check_item.setData(Qt.UserRole, copy_url)
             self.link_crawl_table.setItem(row, 0, check_item)
 
             category_item = QTableWidgetItem(category)
-            category_item.setData(Qt.UserRole, url)
+            category_item.setData(Qt.UserRole, copy_url)
             self.link_crawl_table.setItem(row, 1, category_item)
 
             text_item = QTableWidgetItem(self._short_display(text, max_len=80))
             text_item.setToolTip(text)
-            text_item.setData(Qt.UserRole, url)
+            text_item.setData(Qt.UserRole, copy_url)
             self.link_crawl_table.setItem(row, 2, text_item)
 
-            url_item = QTableWidgetItem(url)
-            url_item.setToolTip(url)
-            url_item.setData(Qt.UserRole, url)
+            url_item = QTableWidgetItem(display_url)
+            url_item.setToolTip(copy_url)
+            url_item.setData(Qt.UserRole, copy_url)
             self.link_crawl_table.setItem(row, 3, url_item)
 
         if self.link_crawl_table.rowCount() > 0:
@@ -2009,6 +2029,8 @@ class FluentMedia2TextWindow(QMainWindow):
             self.task_save_thumbnail_chk.setChecked(False)
         if self.task_save_metadata_chk:
             self.task_save_metadata_chk.setChecked(False)
+        if self.task_result_index_chk:
+            self.task_result_index_chk.setChecked(False)
         if self.task_export_audio_chk:
             self.task_export_audio_chk.setChecked(self.export_audio_chk.isChecked())
         if self.task_download_subtitle_chk:
@@ -2077,6 +2099,8 @@ class FluentMedia2TextWindow(QMainWindow):
                 export_audio = self.task_export_audio_chk.isChecked()
             if self.task_save_metadata_chk:
                 save_metadata = self.task_save_metadata_chk.isChecked()
+            if self.task_result_index_chk:
+                cfg.include_result_index = self.task_result_index_chk.isChecked()
             if self.task_audio_format_combo:
                 audio_format = self.task_audio_format_combo.currentText().strip() or audio_format
             if self.task_subtitle_format_combo:

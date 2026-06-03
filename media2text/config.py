@@ -53,6 +53,7 @@ class ScrapingConfig:
 class AppConfig:
     output_root: str = "outputs"
     naming_template: str = "{platform}_{date}_{title}"
+    include_result_index: bool = False
     subtitle_priority: str = "subtitle_first_then_whisper"
     subtitle_langs: list[str] = field(default_factory=lambda: list(DEFAULT_SUBTITLE_LANGS))
     whisper: WhisperConfig = field(default_factory=WhisperConfig)

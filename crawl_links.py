@@ -8,7 +8,7 @@ import time
 from collections import deque
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from urllib.parse import urljoin, urlparse, urlunparse
+from urllib.parse import quote, urljoin, urlparse, urlunparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -66,6 +66,13 @@ def normalize_url(base_url: str, raw_url: str) -> str | None:
 
     parsed = parsed._replace(fragment="")
     return urlunparse(parsed)
+
+
+def browser_url(url: str) -> str:
+    parsed = urlparse(url)
+    path = quote(requests.utils.unquote(parsed.path), safe="/%:@")
+    query = quote(requests.utils.unquote(parsed.query), safe="=&?/:@%+,$;")
+    return urlunparse(parsed._replace(path=path, query=query))
 
 
 def extension_of(url: str) -> str:
@@ -171,7 +178,7 @@ def extract_wix_course_links(page_url: str, html_text: str, subject: str = "") -
                 continue
             link = normalize_url(root, "/" + str(slug).strip("/"))
             if link:
-                found[title] = (link, title)
+                found[title] = (browser_url(link), title)
 
     def walk(value: object) -> None:
         if isinstance(value, dict):
