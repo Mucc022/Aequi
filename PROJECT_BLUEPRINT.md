@@ -73,6 +73,11 @@ Aequora 是一个 Windows-first 的本地学习资料整理工具：用户丢进
 | AQR-006 | Done | 想要多模态下载工具，支持下载 PDF | PDF 本地文件、PDF 直链、网页内 PDF 链接能进入候选并归档到结果目录，不走 Whisper/音频处理 | 已新增 PDF 文档分支、GUI 候选显示和结果展示，并完成本地/URL/CLI 验证 |
 | AQR-007 | Done | Google Drive PDF 分享链接下载失败 404，需要自动适配 | `drive.google.com/file/d/<id>/...` 能自动转换为 Drive 下载地址，并处理确认 token | 已新增 Google Drive PDF URL 规范化和确认页下载处理 |
 | AQR-008 | Done | Google Drive PDF `/view` 链接被扫成 11 个假候选，且下载返回 HTML | Drive 文档分享页应作为一个直接文档候选；遇到 Drive HTML 错误页时给出权限/登录提示 | 已修复 Drive 候选识别和直接资源跳过逻辑，并把 Drive “无法下载文件”页面解释为权限/匿名下载限制 |
+| AQR-009 | Done | 帮我安装一下环境，启用这个项目 | 本机安装 Python、项目虚拟环境、依赖和 FFmpeg；双击启动优先使用项目 `.venv` | 已完成，烟测通过 |
+| AQR-010 | Done | 网页上明明有多个视频，但候选没有发现记录/只发现无关链接；想要深度挖掘 | Wix 页面能进入 Thunderbolt JSON 深层数据，抓到真实播放器 mp4，不把页脚社交链接当视频 | 已修复并用 Four Seas 页面验证发现 4 条真实视频 |
+| AQR-011 | Done | 给一个母链接，自动把所有链接爬出来并分类标签好；希望有图形化交互，整合在新建任务下面；结果要直接显示并可勾选复制；结果应像网页上的课程目录，而不是底层资源链接 | 新建任务页有“链接地图”面板；Four Seas/Wix 课程目录页优先显示课程日期条目，支持勾选复制，并保留 JSON/CSV/TXT 导出 | 已新增 `crawl_links.py`，并整合进 `gui_fluent.py` |
+| AQR-012 | Done | 输出文件名前面的 `017_`、`018_` 这种编号有点鸡肋，想做成默认不勾选的选项 | 默认文件名不再加顺序编号；需要时可在 GUI 高级设置勾选，或 CLI 使用 `--result-index` | 已新增配置项、GUI 复选框和 CLI 开关 |
+| AQR-013 | Done | 本地版本和 GitHub 版本不一致，本地有 UI 优化，GitHub 也有另一台电脑上的改动 | 合并两边优点：保留本地 PDF/Drive 支持和候选状态修复，同时带回 GitHub 链接地图、Wix 深挖、文件名编号开关和启动脚本改进 | 已完成合并，基础编译、CLI help、链接爬取 help 和 offscreen GUI 构建烟测通过 |
 
 ## 体验优化候选
 
@@ -119,6 +124,30 @@ Aequora 是一个 Windows-first 的本地学习资料整理工具：用户丢进
 - 收紧 Drive 候选判断：只接受 `/file/d/<id>`、`/view`、`/preview`、`.pdf` 文件名尾部和 `/uc?id=...`，避免任意相对字符串污染候选列表。
 - 下载阶段如果 Google Drive 返回 `Google Drive - Can't download file` HTML 页面，现在会明确提示文件可能未公开、需要登录或被 Drive 阻止匿名下载，而不是只显示 `Content-Type=text/html`。
 - 验证：`compileall`、Drive discovery 单元式检查、实际 Drive `uc?export=download` 响应检查、CLI 失败路径 smoke 均完成；临时验证产物已清理。
+
+### 2026-05-29
+
+- 安装 Python 3.12.10，并在项目内创建 `.venv`。
+- 安装 `requirements.txt` 里的 GUI、下载、Whisper 和打包依赖。
+- 通过 WinGet 安装 FFmpeg 8.1.1，并修复用户 PATH，加入 Python 与 FFmpeg 路径。
+- 更新 `start.bat`，优先使用 `.venv\Scripts\pythonw.exe` 启动 GUI。
+- 验证通过：`compileall`、`media_tool.py --help`、FFmpeg 版本检查、跳过 Whisper 的本地音频导出烟测。
+- 修复 Wix Thunderbolt 深层候选扫描：避免 `&registry...` 被 HTML 实体误读成 `®istry...` 导致 JSON 请求 400，并优先读取 Wix `VideoPlayer` 的真实 `src`。
+- 用 `https://www.fourseas-chinese.org/2026-04-26-希伯来历史` 验证，候选发现从误抓页脚 YouTube 改为识别 4 条 `video.wixstatic.com` mp4。
+- 新增 `crawl_links.py`，支持从母链接爬取同站链接，按 `page_internal`、`page_external`、`video`、`image`、`script`、`style` 等类别导出 `links.json`、`links.csv` 和 `links_by_category.txt`。
+- 在 `media2text/gui_fluent.py` 的“新建任务”页加入“链接地图：从母链接爬取并分类”面板，可直接输入母链接、设置深度/最多页面数、启动爬取并打开结果目录。
+- 链接爬取完成后在 GUI 表格内直接渲染结果，支持全选、全选视频、清空选择、复制已选链接；视频链接默认勾选。
+- 优化 Four Seas/Wix 课程目录页解析：从 Thunderbolt `pageList` 中提取课程日期条目（如 `2026-04-14 创世记`），GUI 默认优先展示课程列表，避免把脚本、样式、图片资源当作主要结果。
+- 统一链接地图复制 URL 格式：GUI 可读显示中文路径，但复制和导出使用浏览器标准百分号编码 URL，避免同一课程链接出现中文/编码两种形态。
+- 更新 README，加入 GUI 和 CLI 两种链接爬取使用方式和常用参数。
+- 将结果文件名前缀编号改为可选项：默认不再生成 `001_`、`002_` 前缀；GUI“新建任务 > 高级设置”新增“文件名前加序号”，CLI 新增 `--result-index`/`--no-result-index`。
+
+### 2026-06-05
+
+- 合并本地 `main` 与 GitHub `origin/main` 的分叉版本。
+- 保留本地 PDF/Google Drive 支持、候选状态清理和 Cookie 下载配置。
+- 合入 GitHub 版本的链接地图、Wix 深层链接发现、课程目录优先展示、启动脚本 `.venv` 优先逻辑和文件名编号开关。
+- 验证通过：`compileall`、`media_tool.py --help`、`crawl_links.py --help`、offscreen GUI 构建烟测。
 
 ## 每次任务结束检查表
 

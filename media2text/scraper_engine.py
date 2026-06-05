@@ -43,6 +43,29 @@ DOCUMENT_EXTENSIONS = (".pdf",)
 
 URL_REGEX = re.compile(r"https?://[^\s\"'<>\\]+", re.IGNORECASE)
 ESCAPED_URL_REGEX = re.compile(r"https?:\\\\/\\\\/[^\s\"'<>]+", re.IGNORECASE)
+THUNDERBOLT_HREF_REGEX = re.compile(
+    r"<link\b[^>]*\bhref=(?P<quote>[\"'])(?P<href>[^\"']*siteassets\.parastorage\.com/pages/pages/thunderbolt[^\"']*)(?P=quote)",
+    re.IGNORECASE,
+)
+SOCIAL_ICON_LABELS = {
+    "facebook",
+    "instagram",
+    "linkedin",
+    "tiktok",
+    "x",
+    "youtube",
+    "微博",
+    "微信",
+}
+
+
+def _clean_thunderbolt_href(raw_href: str) -> str:
+    return (
+        raw_href.strip()
+        .replace("&amp;", "&")
+        .replace("&#38;", "&")
+        .replace("®istryLibrariesTopology", "&registryLibrariesTopology")
+    )
 
 
 def normalize_url(base_url: str, raw_url: str) -> str | None:
@@ -112,6 +135,15 @@ def is_probably_document_url(url: str) -> bool:
     return any(path.endswith(ext) for ext in DOCUMENT_EXTENSIONS)
 
 
+def is_probably_social_icon_link(tag: object) -> bool:
+    label = ""
+    if hasattr(tag, "get"):
+        label = str(tag.get("aria-label") or tag.get("title") or "").strip().lower()
+    if not label:
+        return False
+    return label in SOCIAL_ICON_LABELS
+
+
 def extract_youtube_video_id(url: str) -> str | None:
     parsed = urlparse(url)
     host = parsed.netloc.lower()
@@ -159,12 +191,20 @@ def extract_candidates(page_url: str, html_text: str) -> set[str]:
     soup = BeautifulSoup(html_text, "html.parser")
     page_host = urlparse(page_url).netloc.lower()
     found: set[str] = set()
+    social_icon_urls: set[str] = set()
 
     attrs = ("src", "href", "data-src", "data-url", "content")
     for tag in soup.find_all(True):
         for attr in attrs:
             raw_value = tag.get(attr)
             if not raw_value:
+                continue
+            if attr == "href" and is_probably_social_icon_link(tag):
+                normalized_social = normalize_url(page_url, raw_value)
+                if normalized_social:
+                    canonical_social = canonicalize_video_candidate(normalized_social)
+                    if canonical_social:
+                        social_icon_urls.add(canonical_social)
                 continue
             normalized = normalize_url(page_url, raw_value)
             if normalized and (is_probably_video_url(normalized, page_host) or is_probably_document_url(normalized)):
@@ -176,7 +216,7 @@ def extract_candidates(page_url: str, html_text: str) -> set[str]:
         normalized = normalize_url(page_url, match)
         if normalized and (is_probably_video_url(normalized, page_host) or is_probably_document_url(normalized)):
             canonical = canonicalize_video_candidate(normalized)
-            if canonical:
+            if canonical and canonical not in social_icon_urls:
                 found.add(canonical)
 
     return found
@@ -193,15 +233,51 @@ def iter_strings(value: object) -> Iterable[str]:
             yield from iter_strings(item)
 
 
+def extract_wix_video_player_candidates(page_url: str, payload: object) -> set[str]:
+    page_host = urlparse(page_url).netloc.lower()
+    found: set[str] = set()
+
+    def walk(value: object) -> None:
+        if isinstance(value, dict):
+            raw_src = value.get("src")
+            looks_like_video_player = any(
+                key in value for key in ("playableConfig", "animatePoster", "controls", "autoplay", "duration")
+            )
+            if isinstance(raw_src, str) and looks_like_video_player:
+                normalized = normalize_url(page_url, raw_src)
+                if normalized and is_probably_video_url(normalized, page_host):
+                    canonical = canonicalize_video_candidate(normalized)
+                    if canonical:
+                        found.add(canonical)
+
+            for item in value.values():
+                walk(item)
+        elif isinstance(value, list):
+            for item in value:
+                walk(item)
+
+    walk(payload)
+    return found
+
+
 def extract_thunderbolt_payload_urls(page_url: str, html_text: str) -> list[str]:
     soup = BeautifulSoup(html_text, "html.parser")
     urls: list[str] = []
+
+    # Wix preload links contain query params such as "&registry..."; generic HTML
+    # entity decoding can turn that into "®istry..." and make the deep JSON
+    # endpoint return 400. Read raw hrefs first and only decode ampersands.
+    for match in THUNDERBOLT_HREF_REGEX.finditer(html_text):
+        normalized = normalize_url(page_url, _clean_thunderbolt_href(match.group("href")))
+        if normalized:
+            urls.append(normalized)
+
     for link in soup.find_all("link"):
         href = link.get("href")
         if not href:
             continue
         if "siteassets.parastorage.com/pages/pages/thunderbolt" in href and "pageId=" in href:
-            normalized = normalize_url(page_url, href)
+            normalized = normalize_url(page_url, _clean_thunderbolt_href(href))
             if normalized:
                 urls.append(normalized)
     return sorted(set(urls))
@@ -216,6 +292,7 @@ def extract_candidates_from_thunderbolt_payloads(
     page_host = urlparse(page_url).netloc.lower()
     headers = {"User-Agent": user_agent, "Referer": page_url}
     found: set[str] = set()
+    fallback_found: set[str] = set()
 
     for payload_url in payload_urls[:12]:
         try:
@@ -227,20 +304,25 @@ def extract_candidates_from_thunderbolt_payloads(
             logger.debug("Thunderbolt JSON fetch failed: %s (%s)", payload_url, exc)
             continue
 
+        wix_video_candidates = extract_wix_video_player_candidates(page_url, payload)
+        if wix_video_candidates:
+            found.update(wix_video_candidates)
+            continue
+
         for match in ESCAPED_URL_REGEX.findall(body):
             decoded = match.replace("\\/", "/")
             normalized = normalize_url(page_url, decoded)
             if normalized and (is_probably_video_url(normalized, page_host) or is_probably_document_url(normalized)):
                 canonical = canonicalize_video_candidate(normalized)
                 if canonical:
-                    found.add(canonical)
+                    fallback_found.add(canonical)
 
         for match in URL_REGEX.findall(body):
             normalized = normalize_url(page_url, match)
             if normalized and (is_probably_video_url(normalized, page_host) or is_probably_document_url(normalized)):
                 canonical = canonicalize_video_candidate(normalized)
                 if canonical:
-                    found.add(canonical)
+                    fallback_found.add(canonical)
 
         for text in iter_strings(payload):
             normalized_text = text.replace("\\/", "/")
@@ -251,14 +333,14 @@ def extract_candidates_from_thunderbolt_payloads(
                 if normalized and (is_probably_video_url(normalized, page_host) or is_probably_document_url(normalized)):
                     canonical = canonicalize_video_candidate(normalized)
                     if canonical:
-                        found.add(canonical)
+                        fallback_found.add(canonical)
             normalized_direct = normalize_url(page_url, normalized_text)
             if normalized_direct and (is_probably_video_url(normalized_direct, page_host) or is_probably_document_url(normalized_direct)):
                 canonical = canonicalize_video_candidate(normalized_direct)
                 if canonical:
-                    found.add(canonical)
+                    fallback_found.add(canonical)
 
-    return found
+    return found or fallback_found
 
 
 def fetch_page(url: str, timeout: int, user_agent: str) -> str:

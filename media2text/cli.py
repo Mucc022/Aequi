@@ -45,6 +45,12 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--input", action="append", required=True, help="Path/URL input, repeatable")
     run_parser.add_argument("--out", default=None, help="Output root directory")
     run_parser.add_argument("--config", default="config.json", help="Config JSON path")
+    run_parser.add_argument(
+        "--result-index",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Prefix output filenames with a running number",
+    )
     run_parser.add_argument("--model", default=None, help="Override whisper model")
     run_parser.add_argument("--language", default=None, help="Override whisper language (e.g. zh/en/auto)")
     run_parser.add_argument("--candidate-mode", choices=["select", "auto"], default=None)
@@ -115,6 +121,8 @@ def apply_run_overrides(cfg: AppConfig, args: argparse.Namespace) -> None:
 
     if args.candidate_mode:
         cfg.scraping.candidate_mode = args.candidate_mode
+    if args.result_index is not None:
+        cfg.include_result_index = bool(args.result_index)
     if args.download_archive:
         cfg.scraping.download_archive = args.download_archive
     if args.always_try_page is not None:

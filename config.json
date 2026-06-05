@@ -1,6 +1,7 @@
 ﻿{
   "output_root": "outputs",
   "naming_template": "{platform}_{date}_{title}",
+  "include_result_index": false,
   "subtitle_priority": "subtitle_first_then_whisper",
   "subtitle_langs": ["zh-Hans", "zh-CN", "zh", "en", "en.*"],
   "whisper": {

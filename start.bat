@@ -1,3 +1,7 @@
 @echo off
 cd /d %~dp0
-start "" pythonw run_gui.pyw
+if exist ".venv\Scripts\pythonw.exe" (
+    start "" ".venv\Scripts\pythonw.exe" "run_gui.pyw"
+) else (
+    start "" pythonw run_gui.pyw
+)

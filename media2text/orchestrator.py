@@ -245,16 +245,23 @@ class MediaOrchestrator:
     def _claim_result_base_name(self, task: SourceTask, date_str: str, title: str) -> tuple[str, int, str]:
         title_part = self._title_for_filename(title)
         url_hash = hashlib.sha1(task.resolved_input.encode("utf-8", errors="ignore")).hexdigest()[:8]
-        while True:
-            result_index = self._next_result_index
-            self._next_result_index += 1
-            base_name = sanitize_filename(
-                f"{result_index:03d}_{self._display_date(date_str)}_{title_part}_{url_hash}",
-                default=f"{result_index:03d}_media_{url_hash}",
-                max_len=150,
-            )
-            if not any(self.result_dir.glob(base_name + ".*")):
-                return base_name, result_index, url_hash
+        result_index = self._next_result_index
+        self._next_result_index += 1
+        date_part = self._display_date(date_str)
+        if getattr(self.config, "include_result_index", False):
+            raw_base = f"{result_index:03d}_{date_part}_{title_part}_{url_hash}"
+            default_name = f"{result_index:03d}_media_{url_hash}"
+        else:
+            raw_base = f"{date_part}_{title_part}_{url_hash}"
+            default_name = f"media_{url_hash}"
+
+        base_seed = sanitize_filename(raw_base, default=default_name, max_len=150)
+        base_name = base_seed
+        suffix = 2
+        while any(self.result_dir.glob(base_name + ".*")):
+            base_name = sanitize_filename(f"{base_seed}-{suffix}", default=f"{base_seed}-{suffix}", max_len=150)
+            suffix += 1
+        return base_name, result_index, url_hash
 
     def _build_output_paths(
         self,
